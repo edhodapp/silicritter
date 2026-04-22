@@ -135,3 +135,51 @@ Final best fitness: **−95.39** (mean of generation: −96.40). Fitness plateau
 - **Baldwin interference is latent but present.** The GA encodes initial slot-pool configuration; STDP reshapes the weights during the critter's lifetime. Fitness measures the lifetime-shaped behavior. A crossover child inherits the initial triplet (pre_ids, v, plasticity_rate) from one parent per slot but not the plasticized trajectory — so the child's initial state may land in a region neither parent explored. Not corrected for in this experiment; worth knowing for future step design.
 
 **Implication for the adrenaline mechanism going forward:** pure multiplicative gain on `i_total` is too aggressive at low values (silences the network) and too aggressive at high values (saturates firing). A milder mechanism — e.g., `effective_gain = 1 + (adrenaline - 1) * sensitivity` with a sensitivity coefficient < 1, or acting on membrane time constant rather than input current — would preserve firing dynamics across a wider modulator range. Worth considering if we return to gain-mediated tasks; not an immediate blocker.
+
+---
+
+## 2026-04-22 — Step 5.5: side-by-side comparison of five adrenaline gain mechanisms
+
+- **Script:** `experiments/step05b_adrenaline_comparison.py`
+- **Modules under test:** new `GainMode` Literal + five `_modulate_*` helpers + `_GAIN_MODULATORS` dispatch in `src/silicritter/plasticity.py`
+- **Machine:** same as prior steps (MX150)
+- **Scenario:** identical to step 5 (N = 32, K = 8, T = 2 000, drive 17–22 mV, adrenaline profile (1.0, 1.5, 0.8, 1.2), target = 40 Hz × adrenaline, pop=48, gens=80, shared PRNG seed across modes for controlled-variance comparison)
+- **Exit criterion:** declare a winner if any mechanism keeps all four segments within 5 Hz of target; otherwise the GA at this scale is the limiter, not the mechanism
+
+### Results
+
+| mode                | best fitness | err 0 | err 1 | err 2 | err 3 | max err (Hz) |
+|---------------------|-------------:|------:|------:|------:|------:|-------------:|
+| multiplicative      |       −95.39 |  6.00 |  8.19 | 16.00 |  0.94 |       16.00  |
+| multiplicative_mild |       −90.08 |  6.06 | 14.44 |  3.00 |  8.69 |       14.44  |
+| additive            |      −105.00 |  6.06 | 16.12 |  2.06 |  9.62 |       16.12  |
+| **tau_m_scale**     |   **−48.91** |  6.00 |  8.44 |  5.00 |  6.31 |    **8.44**  |
+| threshold_shift     |     −1699.37 |  6.00 | 70.12 | 32.00 | 28.00 |       70.12  |
+
+Per-mode GA time: ~5.5 s on MX150 (80 generations including JIT warmup). Total comparison run: ~33 s.
+
+### Verdict
+
+**No mechanism cleared the 5 Hz/segment exit criterion.** The printed verdict was "NO WINNER — the GA at this scale is the limiter." But the comparison revealed a clear *relative* winner:
+
+- **tau_m_scale is the best mechanism by roughly 2×** (fitness −48.91 vs. −90.08 for the next-best, −95.39 for the step-5 baseline). It's the only mechanism that keeps every segment within ~8 Hz of target. The mechanism choice *does* matter; the GA limiter conclusion applies only to the strict 5 Hz bar.
+- **multiplicative_mild** (sensitivity 0.3) is a small improvement over the default multiplicative at the low-adrenaline end (3 Hz err vs. 16 Hz) but loses accuracy at the high end (14 Hz err vs. 8 Hz).
+- **additive** under-modulates at default offset (5 mV): at adr=1.5 it adds only 2.5 mV, at adr=0.8 subtracts only 1 mV. Would need a larger offset to compete; not explored in this comparison.
+- **threshold_shift** was catastrophic because the default shift (3 mV) multiplied by `tau_m/dt = 20` adds up to ±30 mV to `i_total`. Either the shift constant needs retuning (~0.15 mV would be roughly equivalent to the mild multiplicative regime) or the equivalence formulation needs a different scaling — but the comparison time-budget didn't cover re-tuning losers.
+
+### Silicon implications
+
+Each mechanism has a distinct analog-silicon cost profile:
+
+- **additive** is the cheapest — a single analog bias line per neuron, summed into the integrator input. Most like a simple current-mode adder.
+- **multiplicative** and **multiplicative_mild** need an analog multiplier (translinear / Gilbert cell or four-quadrant OTA), which is genuinely more expensive than a bias.
+- **tau_m_scale** requires a variable membrane-leak conductance. In CMOS this maps to a modulated OTA bias setting the leak current, which is cheap (a single bias line adjusts an integrator time constant). Arguably *cheaper* than a multiplicative input path, because it modulates a bias rather than requiring a multiplier in the signal path.
+- **threshold_shift** is cheap in silicon — just shift the comparator reference. The catastrophic result here is an experimental-parameter issue, not a silicon-cost issue.
+
+So: **tau_m_scale wins on computational performance AND plausibly on silicon realizability.** It's cheaper than a multiplier and gives the best fitness.
+
+### Recommendation going forward
+
+The library default remains `gain_mode="multiplicative"` to preserve byte-exact compatibility with step 4 and step 5 perf numbers already in this log. But **step 6+ experiments should adopt `gain_mode="tau_m_scale"` as the working choice**, and future adrenaline-related task design should assume tau_m modulation rather than input-current scaling. If subsequent experiments want even tighter tracking, re-running the comparison at pop=200+ and gens=200+ would tell us whether pushing the GA harder recovers the 5 Hz bar under tau_m_scale.
+
+**What this doesn't settle:** whether other modulators (cortisol-like, oxytocin-like) should also act on membrane time constants, on bias currents, on threshold shifts, or on specific plasticity parameters. Each chemical signal gets its own mechanism-selection question; tau_m_scale wins for a gain / arousal modulator but "arousal → faster membrane integration" doesn't necessarily generalize to "stress → slower plasticity." Decide per-modulator, per-role.

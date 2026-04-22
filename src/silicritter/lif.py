@@ -69,7 +69,7 @@ def integrate_and_spike(
     v: jax.Array,
     i_total: jax.Array,
     dt_ms: float = DT_MS,
-    tau_m_ms: float = TAU_M_MS,
+    tau_m_ms: float | jax.Array = TAU_M_MS,
 ) -> tuple[jax.Array, jax.Array]:
     """Forward-Euler LIF integration with threshold-and-reset.
 
@@ -81,7 +81,9 @@ def integrate_and_spike(
         v: current membrane potentials, shape (N,), mV.
         i_total: total input current this step, shape (N,).
         dt_ms: integration timestep in ms.
-        tau_m_ms: membrane time constant in ms.
+        tau_m_ms: membrane time constant in ms. Accepts float or JAX
+            scalar Array so modulators (e.g. adrenaline tau_m_scale)
+            can pass a per-step effective time constant.
 
     Returns:
         v_next: post-step membrane potentials, with V_RESET_MV where a

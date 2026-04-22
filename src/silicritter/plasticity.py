@@ -59,13 +59,116 @@ not before.
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Callable, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
 
 from silicritter.lif import DT_MS, TAU_M_MS, LIFState, integrate_and_spike
 from silicritter.slotpool import SlotPool, synaptic_current
+
+
+GainMode = Literal[
+    "multiplicative",
+    "multiplicative_mild",
+    "additive",
+    "tau_m_scale",
+    "threshold_shift",
+]
+
+# Tuning constants used by the non-baseline gain mechanisms. Chosen so
+# that an adrenaline range of [0.8, 1.5] (the step-5 task profile)
+# produces meaningful but not catastrophic modulation.
+_MILD_SENSITIVITY: float = 0.3
+_ADDITIVE_OFFSET_MV: float = 5.0
+_THRESHOLD_SHIFT_MV: float = 3.0
+
+
+def _modulate_multiplicative(
+    base_i_total: jax.Array,
+    adrenaline: jax.Array,
+    tau_m_ms: float,
+    dt_ms: float,
+) -> tuple[jax.Array, jax.Array]:
+    """Step-4 baseline: i_total *= adrenaline. tau_m unchanged."""
+    del dt_ms
+    return base_i_total * adrenaline, jnp.asarray(tau_m_ms)
+
+
+def _modulate_multiplicative_mild(
+    base_i_total: jax.Array,
+    adrenaline: jax.Array,
+    tau_m_ms: float,
+    dt_ms: float,
+) -> tuple[jax.Array, jax.Array]:
+    """Scaled multiplicative: i_total *= 1 + (adr - 1) * sensitivity."""
+    del dt_ms
+    factor = 1.0 + (adrenaline - 1.0) * _MILD_SENSITIVITY
+    return base_i_total * factor, jnp.asarray(tau_m_ms)
+
+
+def _modulate_additive(
+    base_i_total: jax.Array,
+    adrenaline: jax.Array,
+    tau_m_ms: float,
+    dt_ms: float,
+) -> tuple[jax.Array, jax.Array]:
+    """Additive bias offset: i_total += (adr - 1) * offset_mv."""
+    del dt_ms
+    offset = (adrenaline - 1.0) * _ADDITIVE_OFFSET_MV
+    return base_i_total + offset, jnp.asarray(tau_m_ms)
+
+
+def _modulate_tau_m_scale(
+    base_i_total: jax.Array,
+    adrenaline: jax.Array,
+    tau_m_ms: float,
+    dt_ms: float,
+) -> tuple[jax.Array, jax.Array]:
+    """Scale tau_m: higher adrenaline -> faster membrane integration.
+
+    Precondition: adrenaline > 0. Division by a non-positive adrenaline
+    produces inf or a negative effective tau, which flips the leak
+    term's sign in `integrate_and_spike` and silently corrupts the
+    dynamics (no NaN, no exception). Callers are responsible for
+    keeping adrenaline > 0 under this gain_mode; biological plausibility
+    aligns with this precondition (adrenaline levels are non-negative).
+    """
+    del dt_ms
+    return base_i_total, jnp.asarray(tau_m_ms) / adrenaline
+
+
+def _modulate_threshold_shift(
+    base_i_total: jax.Array,
+    adrenaline: jax.Array,
+    tau_m_ms: float,
+    dt_ms: float,
+) -> tuple[jax.Array, jax.Array]:
+    """Equivalent to lowering V_THRESH by (adr - 1) * shift_mv.
+
+    Lowering V_THRESH by delta is equivalent, after one Euler step, to
+    adding delta * (tau_m / dt) to i_total (so that the integrated dv
+    picks up exactly delta of headroom). We implement the equivalence
+    rather than plumbing a per-step V_THRESH through integrate_and_spike.
+    """
+    delta = (adrenaline - 1.0) * _THRESHOLD_SHIFT_MV
+    shifted = base_i_total + delta * (tau_m_ms / dt_ms)
+    return shifted, jnp.asarray(tau_m_ms)
+
+
+_GAIN_MODULATORS: dict[
+    GainMode,
+    Callable[
+        [jax.Array, jax.Array, float, float],
+        tuple[jax.Array, jax.Array],
+    ],
+] = {
+    "multiplicative": _modulate_multiplicative,
+    "multiplicative_mild": _modulate_multiplicative_mild,
+    "additive": _modulate_additive,
+    "tau_m_scale": _modulate_tau_m_scale,
+    "threshold_shift": _modulate_threshold_shift,
+}
 
 
 class STDPParams(NamedTuple):
@@ -125,6 +228,7 @@ def step_plastic(
     valence: jax.Array,
     adrenaline: jax.Array,
     params: STDPParams,
+    gain_mode: GainMode = "multiplicative",
     dt_ms: float = DT_MS,
     tau_m_ms: float = TAU_M_MS,
 ) -> PlasticNetState:
@@ -133,19 +237,15 @@ def step_plastic(
     Args:
         state: current PlasticNetState.
         i_ext: external current drive this step, shape (N_post,).
-        valence: scalar three-factor modulator for this step. Positive
-            values reinforce the STDP sign convention (LTP on pre-then-
-            post correlations, LTD on post-then-pre). Negative values
-            scale *and* sign-flip the update, so the asymmetry between
-            a_plus and a_minus carries through with reversed sign.
-            Zero gates all plasticity off.
-        adrenaline: scalar neural-gain modulator. Multiplies the total
-            input current (i_ext + i_syn) at the LIF integration step.
-            Baseline is 1.0 (unmodulated). Higher values raise effective
-            drive and therefore firing rate; lower values suppress.
-            Negative values invert the drive; this is nonphysical in
-            biology but mathematically well-defined.
+        valence: scalar three-factor modulator for this step.
+        adrenaline: scalar neural-gain modulator for this step. How it
+            acts depends on `gain_mode`; baseline adrenaline = 1.0
+            leaves every mode equivalent to the un-modulated dynamics.
         params: STDP hyperparameters.
+        gain_mode: selects how adrenaline modulates the LIF step. See
+            the GainMode Literal and the _GAIN_MODULATORS registry.
+            Default "multiplicative" reproduces step 4 / step 5
+            behaviour (i_total *= adrenaline).
         dt_ms: integration timestep in ms.
         tau_m_ms: LIF membrane time constant in ms.
 
@@ -163,9 +263,13 @@ def step_plastic(
 
     prev_spikes = state.lif.spikes
     i_syn = synaptic_current(state.pool, prev_spikes)
-    i_total = (i_ext + i_syn) * adrenaline
+    base_i_total = i_ext + i_syn
+    modulator = _GAIN_MODULATORS[gain_mode]
+    i_total, tau_eff = modulator(
+        base_i_total, adrenaline, tau_m_ms, dt_ms
+    )
     v_next, spike_post = integrate_and_spike(
-        state.lif.v, i_total, dt_ms, tau_m_ms
+        state.lif.v, i_total, dt_ms, tau_eff
     )
     new_lif = LIFState(v=v_next, spikes=spike_post)
 
@@ -207,6 +311,7 @@ def simulate_plastic(
     valence_trace: jax.Array,
     adrenaline_trace: jax.Array,
     params: STDPParams,
+    gain_mode: GainMode = "multiplicative",
 ) -> tuple[PlasticNetState, jax.Array]:
     """Simulate a plastic slot-pool network over drive + modulator traces.
 
@@ -214,10 +319,9 @@ def simulate_plastic(
         initial_state: starting PlasticNetState.
         i_ext_trace: external current per timestep, shape (T, N_post).
         valence_trace: scalar valence per timestep, shape (T,).
-        adrenaline_trace: scalar adrenaline (gain modulator) per
-            timestep, shape (T,). Baseline 1.0 preserves step 3
-            dynamics.
+        adrenaline_trace: scalar adrenaline per timestep, shape (T,).
         params: STDP hyperparameters.
+        gain_mode: adrenaline mechanism selector; see step_plastic.
 
     Returns:
         final_state: PlasticNetState after T steps.
@@ -230,7 +334,12 @@ def simulate_plastic(
     ) -> tuple[PlasticNetState, jax.Array]:
         i_ext_t, valence_t, adrenaline_t = drive
         next_state = step_plastic(
-            state, i_ext_t, valence_t, adrenaline_t, params
+            state,
+            i_ext_t,
+            valence_t,
+            adrenaline_t,
+            params,
+            gain_mode=gain_mode,
         )
         return next_state, next_state.lif.spikes
 

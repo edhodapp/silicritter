@@ -333,6 +333,97 @@ def test_adrenaline_raises_firing_rate() -> None:
     assert rate_high > rate_low
 
 
+def test_all_gain_modes_identity_at_baseline_adrenaline() -> None:
+    """adrenaline = 1.0 leaves every gain_mode equivalent to the baseline."""
+    n = 6
+    t = 40
+    pool = init_random(n, n, 3, jax.random.PRNGKey(30))
+    state = PlasticNetState(
+        lif=init_state(n),
+        pool=pool,
+        traces=init_traces(n, n),
+    )
+    i_ext_trace = jnp.full((t, n), 20.0, dtype=jnp.float32)
+    valence_trace = jnp.ones((t,), dtype=jnp.float32)
+    adr_baseline = jnp.ones((t,), dtype=jnp.float32)
+    params = default_params()
+
+    _, spikes_mult = simulate_plastic(
+        state,
+        i_ext_trace,
+        valence_trace,
+        adr_baseline,
+        params,
+        gain_mode="multiplicative",
+    )
+    # Guard against a vacuous pass where every mode produces zero spikes.
+    assert int(spikes_mult.sum()) > 0
+    for mode in (
+        "multiplicative_mild",
+        "additive",
+        "tau_m_scale",
+        "threshold_shift",
+    ):
+        _, spikes_other = simulate_plastic(
+            state,
+            i_ext_trace,
+            valence_trace,
+            adr_baseline,
+            params,
+            gain_mode=mode,
+        )
+        assert bool(jnp.all(spikes_mult == spikes_other)), (
+            f"gain_mode={mode} diverged from multiplicative at "
+            "baseline adrenaline"
+        )
+
+
+def test_each_gain_mode_raises_firing_with_elevated_adrenaline() -> None:
+    """For every gain_mode, adrenaline > 1 produces at least as many spikes."""
+    n = 8
+    t = 300
+    pool = init_random(n, n, 3, jax.random.PRNGKey(31))
+    state = PlasticNetState(
+        lif=init_state(n),
+        pool=pool,
+        traces=init_traces(n, n),
+    )
+    # Use quiet drive so baseline is sub-saturated and there is headroom
+    # to rise; v_min clip stays comfortable.
+    i_ext_trace = jnp.full((t, n), 16.5, dtype=jnp.float32)
+    valence_trace = jnp.zeros((t,), dtype=jnp.float32)
+    adr_baseline = jnp.full((t,), 1.0, dtype=jnp.float32)
+    adr_elevated = jnp.full((t,), 1.3, dtype=jnp.float32)
+    params = default_params()
+    for mode in (
+        "multiplicative",
+        "multiplicative_mild",
+        "additive",
+        "tau_m_scale",
+        "threshold_shift",
+    ):
+        _, spikes_base = simulate_plastic(
+            state,
+            i_ext_trace,
+            valence_trace,
+            adr_baseline,
+            params,
+            gain_mode=mode,
+        )
+        _, spikes_elev = simulate_plastic(
+            state,
+            i_ext_trace,
+            valence_trace,
+            adr_elevated,
+            params,
+            gain_mode=mode,
+        )
+        assert int(spikes_elev.sum()) >= int(spikes_base.sum()), (
+            f"gain_mode={mode}: elevated adrenaline did not raise "
+            "firing count"
+        )
+
+
 def test_baseline_adrenaline_preserves_step_4_behavior() -> None:
     """adrenaline = 1.0 throughout must exactly match a step-4-shaped sim."""
     # Smoke test: just confirm running with baseline adrenaline produces
