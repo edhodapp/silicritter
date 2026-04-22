@@ -54,10 +54,12 @@ dev = [
 Repository = "https://github.com/edhodapp/silicritter"
 Issues = "https://github.com/edhodapp/silicritter/issues"
 
-# No packages yet — structure emerges per experiment (see CLAUDE.md).
-# Update py-modules / packages when the first module lands.
+# src-layout: silicritter package code lives under src/silicritter/
 [tool.setuptools]
-py-modules = []
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.mypy]
 strict = true
@@ -75,8 +77,7 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-# source updates when the first module lands
-# source = ["silicritter"]
+source = ["silicritter"]
 
 [tool.coverage.report]
 exclude_lines = [
