@@ -34,6 +34,17 @@ V_THRESH_MV: float = -50.0
 V_RESET_MV: float = -65.0
 DT_MS: float = 1.0
 
+# Invariant guard: a reset potential at or above threshold would cause
+# every post-reset step to spike immediately, locking the network into
+# pathological activity. Assert at module import so any future edit of
+# the constants is caught early.
+assert V_RESET_MV < V_THRESH_MV, (
+    "V_RESET_MV must be below V_THRESH_MV; otherwise neurons spike "
+    "continuously after reset."
+)
+assert TAU_M_MS > 0.0, "TAU_M_MS must be positive."
+assert DT_MS > 0.0, "DT_MS must be positive."
+
 
 class LIFState(NamedTuple):
     """Transient state of an LIF population across timesteps.
@@ -54,6 +65,36 @@ def init_state(n_neurons: int) -> LIFState:
     return LIFState(v=v, spikes=spikes)
 
 
+def integrate_and_spike(
+    v: jax.Array,
+    i_total: jax.Array,
+    dt_ms: float = DT_MS,
+    tau_m_ms: float = TAU_M_MS,
+) -> tuple[jax.Array, jax.Array]:
+    """Forward-Euler LIF integration with threshold-and-reset.
+
+    Pure membrane-dynamics primitive: given the current membrane potential
+    and the total input current, advance V by one timestep and emit
+    threshold-crossing spikes with V reset to V_RESET_MV.
+
+    Args:
+        v: current membrane potentials, shape (N,), mV.
+        i_total: total input current this step, shape (N,).
+        dt_ms: integration timestep in ms.
+        tau_m_ms: membrane time constant in ms.
+
+    Returns:
+        v_next: post-step membrane potentials, with V_RESET_MV where a
+            spike occurred.
+        spike: boolean spike flags, shape (N,).
+    """
+    dv = (-(v - V_REST_MV) + i_total) * (dt_ms / tau_m_ms)
+    v_integrated = v + dv
+    spike = v_integrated >= V_THRESH_MV
+    v_next = jnp.where(spike, V_RESET_MV, v_integrated)
+    return v_next, spike
+
+
 def step(
     state: LIFState,
     weights: jax.Array,
@@ -61,7 +102,7 @@ def step(
     dt_ms: float = DT_MS,
     tau_m_ms: float = TAU_M_MS,
 ) -> LIFState:
-    """Advance the LIF population by one timestep (forward Euler).
+    """Advance the LIF population by one timestep using dense weights.
 
     Args:
         state: current LIFState (V at time t, spikes at t-1).
@@ -75,12 +116,7 @@ def step(
     """
     i_syn = weights @ state.spikes.astype(jnp.float32)
     i_total = i_ext + i_syn
-    dv = (-(state.v - V_REST_MV) + i_total) * (dt_ms / tau_m_ms)
-    v_integrated = state.v + dv
-
-    spike = v_integrated >= V_THRESH_MV
-    v_next = jnp.where(spike, V_RESET_MV, v_integrated)
-
+    v_next, spike = integrate_and_spike(state.v, i_total, dt_ms, tau_m_ms)
     return LIFState(v=v_next, spikes=spike)
 
 

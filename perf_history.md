@@ -32,3 +32,28 @@ Mean firing rate across population: **40.0 Hz** (cortical-regime activity).
 - MX150 throughput is kernel-launch-overhead-limited for workloads this small, not sustained-compute-limited. Back-of-envelope: the dominant per-step cost is the N × N recurrent matmul (~2 N² ≈ 2.1 M FLOPS per step, ~21 GFLOPS total over 10 k steps). MX150 peak is ~1.1 TFLOPS, so a compute-bound floor is ~19 ms; we're ~65× off peak, dominated by per-step dispatch cost through `jax.lax.scan`.
 - A modern discrete GPU (RTX 30-series or better) should see 10–100× better sustained throughput on the same script; this baseline is "GPU path is exercised correctly and JIT caches are hit," not "peak hardware performance."
 - No plasticity in this baseline — weights are fixed. Slot-pool / structural-plasticity experiments will establish separate baselines as they land.
+
+---
+
+## 2026-04-22 — Step 3: slot-pool forward-sim baseline
+
+- **Script:** `experiments/step03_slotpool_throughput.py`
+- **Modules under test:** `src/silicritter/slotpool.py` (SlotPool representation, `synaptic_current`, `step`, `simulate`) + `src/silicritter/lif.py` (`integrate_and_spike` helper, shared with the dense-weights path)
+- **Machine:** same as step 2 (Huawei MateBook X Pro 2018, MX150)
+- **Stack:** same as step 2 (Python 3.12.3, JAX 0.10.0)
+- **Parameters:** N = 1024 neurons, K = 64 slots / post-neuron (≈6 % of dense connectivity), T = 10 000 steps, 5 timed repeats after a warmup pass
+
+| metric                             | min       | median    |
+|------------------------------------|-----------|-----------|
+| wall-clock elapsed (ms)            | 241.3     | 245.8     |
+| throughput (neuron-steps/s)        | 4.24e+07  | 4.17e+07  |
+| slot-eval throughput (slot-evals/s)| —         | 2.67e+09  |
+
+Mean firing rate across population: **40.0 Hz** (matches step 2 regime).
+
+**Notes:**
+
+- **~5× speed-up over step 2 dense baseline** (8.35e6 → 4.24e7 neuron-steps/s). Per-step synaptic input dropped from O(N²) = 1 048 576 ops to O(N·K) = 65 536 ops — a 16× reduction in inner-loop work. The realized 5× speed-up (not 16×) is consistent with per-step dispatch / scan overhead on the MX150 still contributing a fixed baseline cost that doesn't shrink with smaller inner kernels.
+- 40 Hz firing rate is preserved — the slot-pool representation with matched weight scale reproduces the step 2 firing regime qualitatively.
+- Tests (`tests/test_slotpool.py`) include byte-exact equivalence between `slotpool.step(pool, ...)` and `lif.step(effective_weights(pool), ...)`, plus a full-trace equivalence over 50 steps — so the representation is validated against the dense-matrix ground truth, not just numerically plausible.
+- Still no plasticity — slots are static. Step 4 adds three-factor STDP + valence broadcast on top of this representation.
