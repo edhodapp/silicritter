@@ -92,3 +92,46 @@ Mean absolute change **|Δv| = 0.081**; max **|Δv| = 0.4998** (at least one slo
 - Weights are clearly moving (max reached the clip ceiling, mean doubled) — plasticity is active, not just nominally wired. Tests confirm valence = 0 and plasticity_rate = 0 both freeze weights exactly.
 - Constant valence = +1 is the simplest possible three-factor setup; time-varying valence (rewarding specific network states) lands when we have an embodied target in step 5+.
 - Still no structural plasticity — slots are bound for the lifetime of the sim. Slots at v_min = 0 are functionally silent but not released back to the free pool. Structural release / acquisition is the missing piece before we can genuinely claim exuberance-and-pruning dynamics.
+
+---
+
+## 2026-04-22 — Step 5: GA outer loop validation on adrenaline-driven target firing rate
+
+- **Script:** `experiments/step05_ga_target_rate.py`
+- **Module under test:** `src/silicritter/ga.py` (`Genome`, `random_genome`, `random_population`, `decode_to_pool`, `tournament_select`, `uniform_crossover`, `mutate`)
+- **Machine:** same as prior steps (MX150)
+- **Scenario:** N = 32 neurons, K = 8 slots/post, T = 2 000 steps, piecewise adrenaline profile (1.0 → 1.5 → 0.8 → 1.2), target firing rate = 40 Hz × adrenaline per 100-step window
+- **GA:** population 48, generations 80, tournament size 3, elitism 2, v_sigma 0.01, rate_sigma 0.05, pre_resample_prob 0.03
+
+**Throughput:**
+
+| metric                      | value   |
+|-----------------------------|---------|
+| per-generation eval time    | ~22 ms  |
+| total 80-gen wall time      | ~1.8 s  |
+| population-batched inner sims per second | ~2 200 critter-lifetimes / s |
+
+**Final best genome behavior by segment:**
+
+| segment | adrenaline | target (Hz) | achieved (Hz) | \|err\| |
+|---------|-----------:|------------:|--------------:|--------:|
+| 0 | 1.00 | 40.0 | 34.0 | 6.0 |
+| 1 | 1.50 | 60.0 | 68.2 | 8.2 |
+| 2 | 0.80 | 32.0 | 16.0 | 16.0 |
+| 3 | 1.20 | 48.0 | 48.9 | 0.9 |
+
+Final best fitness: **−95.39** (mean of generation: −96.40). Fitness plateaus around gen 28–30; the subsequent 50 generations add marginal improvement. Direct encoding at this scale converges fast and then stalls.
+
+**What step 5 validates (the whole point of the step):**
+
+- Two-loop structure works end-to-end: `jax.jit(jax.vmap(evaluate_single))` batches a 48-member population through `simulate_plastic` in one GPU kernel sequence, each generation completes in ~22 ms including JIT'd tournament selection, crossover, and mutation. No plumbing issues.
+- GA produces improvement over random init: initial best fitness ≈ −98 → final ≈ −95. Modest but real.
+- Three of four adrenaline segments track the target within ~8 Hz.
+
+**What step 5 genuinely reveals (not a failure to smooth over):**
+
+- **Segment 2 exposes a floor problem in the multiplicative-gain model of adrenaline.** At adrenaline = 0.8 with drive 17–22 mV, effective drive is 13.6–17.6 mV. V_REST = −65, V_THRESH = −50, so a cell needs sustained drive > 15 mV to reach threshold at equilibrium. Many cells sit near or below the firing floor, producing ~16 Hz — roughly half the 32 Hz target. No weight configuration can fix this: the GA can amplify synaptic input but not push an individual neuron above its own threshold once adrenaline has suppressed its gain enough. This is an architectural finding about the modulator mechanism, not a tuning failure.
+- **Direct encoding plateaus fast.** 30 generations ≈ 80 generations for this task. The GA rapidly finds good local optima and then can't explore past them. Scaling to richer tasks will need indirect encoding (CPPN / developmental rules) per the D004-era discussion — direct encoding is a loop-validation vehicle, not a research path.
+- **Baldwin interference is latent but present.** The GA encodes initial slot-pool configuration; STDP reshapes the weights during the critter's lifetime. Fitness measures the lifetime-shaped behavior. A crossover child inherits the initial triplet (pre_ids, v, plasticity_rate) from one parent per slot but not the plasticized trajectory — so the child's initial state may land in a region neither parent explored. Not corrected for in this experiment; worth knowing for future step design.
+
+**Implication for the adrenaline mechanism going forward:** pure multiplicative gain on `i_total` is too aggressive at low values (silences the network) and too aggressive at high values (saturates firing). A milder mechanism — e.g., `effective_gain = 1 + (adrenaline - 1) * sensitivity` with a sensitivity coefficient < 1, or acting on membrane time constant rather than input current — would preserve firing dynamics across a wider modulator range. Worth considering if we return to gain-mediated tasks; not an immediate blocker.
