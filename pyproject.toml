@@ -1,0 +1,86 @@
+# silicritter project configuration
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "silicritter"
+version = "0.0.0.dev0"
+description = "Analog-neural-silicon exploration: simulation of living-creature neural networks with developmental plasticity (exuberance and lifelong sculpting)."
+authors = [
+    { name = "Ed Hodapp", email = "ed@hodapp.com" },
+]
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.11"
+# Note: license info is in the `license` field (PEP 639 SPDX expression).
+# Per setuptools >= 77, license classifiers are deprecated in favor of the
+# SPDX expression and must not coexist with it.
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    # Belt-and-suspenders: signals to PyPI uploaders to reject this package.
+    "Private :: Do Not Upload",
+]
+
+dependencies = [
+    # Core numerical / GPU compute. jax[cuda12] bundles CUDA 12 runtime libs
+    # compatible with the host NVIDIA driver (driver 580 reports CUDA 13.0,
+    # which is backward-compatible with CUDA 12 runtime).
+    "jax[cuda12]>=0.4.30",
+    "numpy>=1.26",
+    # Data modeling per Ed's Python standards.
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "flake8>=7.0",
+    "pylint>=3.0",
+    "mypy>=1.8",
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "coverage[toml]>=7.4",
+]
+
+[project.urls]
+Repository = "https://github.com/edhodapp/silicritter"
+Issues = "https://github.com/edhodapp/silicritter/issues"
+
+# No packages yet — structure emerges per experiment (see CLAUDE.md).
+# Update py-modules / packages when the first module lands.
+[tool.setuptools]
+py-modules = []
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+addopts = [
+    "--cov",
+    "--cov-branch",
+    "--cov-report=term-missing",
+]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+# source updates when the first module lands
+# source = ["silicritter"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

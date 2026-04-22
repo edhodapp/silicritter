@@ -10,6 +10,8 @@ venv/
 htmlcov/
 .tox/
 *.egg-info/
+build/
+dist/
 
 # Editors
 .vscode/
