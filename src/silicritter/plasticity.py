@@ -4,9 +4,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Copyright (C) 2026 Ed Hodapp
 
 Step 4 of the silicritter implementation ladder: add weight plasticity
-on top of the static slot-pool representation from step 3. This is
-weight plasticity only - slot acquisition, release, and eviction
-(structural plasticity proper) land in step 4.5 / step 5.
+on top of the static slot-pool representation from step 3. Weight
+plasticity lives in this module; **slot release** (structural
+plasticity's pruning half) is provided by
+`silicritter.structural.apply_release` and landed in step 6 — it is
+invoked from `step_plastic` when a `structural_params` argument is
+passed. Slot **acquisition** (the exuberance / formation half) is
+still to come; it requires PRNG threading through the scan carry and
+lands in its own step when we need it.
 
 The plasticity rule is online spike-timing-dependent (Song, Miller,
 Abbott 2000) with pre-decayed eligibility traces, modulated by a
@@ -66,6 +71,7 @@ import jax.numpy as jnp
 
 from silicritter.lif import DT_MS, TAU_M_MS, LIFState, integrate_and_spike
 from silicritter.slotpool import SlotPool, synaptic_current
+from silicritter.structural import StructuralParams, apply_release
 
 
 GainMode = Literal[
@@ -229,6 +235,7 @@ def step_plastic(
     adrenaline: jax.Array,
     params: STDPParams,
     gain_mode: GainMode = "multiplicative",
+    structural_params: StructuralParams | None = None,
     dt_ms: float = DT_MS,
     tau_m_ms: float = TAU_M_MS,
 ) -> PlasticNetState:
@@ -246,11 +253,16 @@ def step_plastic(
             the GainMode Literal and the _GAIN_MODULATORS registry.
             Default "multiplicative" reproduces step 4 / step 5
             behaviour (i_total *= adrenaline).
+        structural_params: when provided, apply slot-release structural
+            plasticity after the weight update; when None (the default),
+            skip structural plasticity entirely and preserve step 4 / 5
+            byte-exact behaviour.
         dt_ms: integration timestep in ms.
         tau_m_ms: LIF membrane time constant in ms.
 
     Returns:
-        Next PlasticNetState (new LIF, new pool.v, new traces).
+        Next PlasticNetState (new LIF, new pool.v, new traces, and
+        with released slots deactivated when structural_params is set).
     """
     # Single-population recurrent assumption: pre_ids index into the
     # recurrent raster, which has the same length as the trace vectors.
@@ -296,6 +308,12 @@ def step_plastic(
     new_v = jnp.clip(state.pool.v + dv, params.v_min, params.v_max)
     new_pool = state.pool._replace(v=new_v)
 
+    # Structural plasticity (slot release) after weight update. Runs
+    # before folding this step's spike into the traces so next-step
+    # plasticity sees the post-release pool.
+    if structural_params is not None:
+        new_pool = apply_release(new_pool, structural_params)
+
     # Finally fold this step's spike into the traces for the next step.
     new_traces = Traces(
         pre=pre_decayed + spike_post_f,
@@ -312,6 +330,7 @@ def simulate_plastic(
     adrenaline_trace: jax.Array,
     params: STDPParams,
     gain_mode: GainMode = "multiplicative",
+    structural_params: StructuralParams | None = None,
 ) -> tuple[PlasticNetState, jax.Array]:
     """Simulate a plastic slot-pool network over drive + modulator traces.
 
@@ -322,6 +341,8 @@ def simulate_plastic(
         adrenaline_trace: scalar adrenaline per timestep, shape (T,).
         params: STDP hyperparameters.
         gain_mode: adrenaline mechanism selector; see step_plastic.
+        structural_params: when set, apply slot-release structural
+            plasticity each step.
 
     Returns:
         final_state: PlasticNetState after T steps.
@@ -340,6 +361,7 @@ def simulate_plastic(
             adrenaline_t,
             params,
             gain_mode=gain_mode,
+            structural_params=structural_params,
         )
         return next_state, next_state.lif.spikes
 

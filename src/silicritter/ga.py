@@ -45,11 +45,13 @@ class Genome(NamedTuple):
 def decode_to_pool(genome: Genome) -> SlotPool:
     """Decode a Genome into a SlotPool with all slots active."""
     active = jnp.ones_like(genome.v, dtype=jnp.bool_)
+    release_counter = jnp.zeros_like(genome.pre_ids, dtype=jnp.int32)
     return SlotPool(
         pre_ids=genome.pre_ids,
         v=genome.v,
         plasticity_rate=genome.plasticity_rate,
         active=active,
+        release_counter=release_counter,
     )
 
 

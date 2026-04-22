@@ -61,7 +61,8 @@ def test_synaptic_current_sums_active_slots() -> None:
     active = jnp.array(
         [[True, True, False], [True, False, True]], dtype=jnp.bool_
     )
-    pool = SlotPool(pre_ids, v, plasticity_rate, active)
+    release_counter = jnp.zeros_like(pre_ids)
+    pool = SlotPool(pre_ids, v, plasticity_rate, active, release_counter)
 
     # Pre 1 and pre 3 fire.
     spikes = jnp.array([False, True, False, True], dtype=jnp.bool_)
@@ -81,7 +82,8 @@ def test_effective_weights_accumulates_duplicate_bindings() -> None:
     v = jnp.array([[1.5, 2.5]], dtype=jnp.float32)
     plasticity_rate = jnp.ones_like(v)
     active = jnp.ones_like(v, dtype=jnp.bool_)
-    pool = SlotPool(pre_ids, v, plasticity_rate, active)
+    release_counter = jnp.zeros_like(pre_ids)
+    pool = SlotPool(pre_ids, v, plasticity_rate, active, release_counter)
 
     w = effective_weights(pool, n_pre=3)
     assert w.shape == (1, 3)

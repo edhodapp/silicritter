@@ -183,3 +183,45 @@ So: **tau_m_scale wins on computational performance AND plausibly on silicon rea
 The library default remains `gain_mode="multiplicative"` to preserve byte-exact compatibility with step 4 and step 5 perf numbers already in this log. But **step 6+ experiments should adopt `gain_mode="tau_m_scale"` as the working choice**, and future adrenaline-related task design should assume tau_m modulation rather than input-current scaling. If subsequent experiments want even tighter tracking, re-running the comparison at pop=200+ and gens=200+ would tell us whether pushing the GA harder recovers the 5 Hz bar under tau_m_scale.
 
 **What this doesn't settle:** whether other modulators (cortisol-like, oxytocin-like) should also act on membrane time constants, on bias currents, on threshold shifts, or on specific plasticity parameters. Each chemical signal gets its own mechanism-selection question; tau_m_scale wins for a gain / arousal modulator but "arousal → faster membrane integration" doesn't necessarily generalize to "stress → slower plasticity." Decide per-modulator, per-role.
+
+---
+
+## 2026-04-22 — Step 6: structural plasticity (slot release)
+
+- **Script:** `experiments/step06_structural_release.py`
+- **Module under test:** new `src/silicritter/structural.py` (`StructuralParams`, `default_structural_params`, `apply_release`), plus optional `structural_params` parameter threaded through `step_plastic` and `simulate_plastic`
+- **Scale:** N = 64 neurons, K = 16 slots/post (pool capacity = 1 024), 20 chunks × 250 steps (total T = 5 000 simulated)
+- **Structural params:** `v_release_threshold = 0.01`, `release_dwell_steps = 100`
+- **STDP params:** defaults (a_plus = 0.010, a_minus = 0.012)
+
+### Results
+
+Active-slot count over 20 measurement chunks (5 000 steps total):
+
+| condition      | initial | final | released | retention |
+|----------------|--------:|------:|---------:|----------:|
+| valence = +1   |    1024 |   117 |      907 |     11.4% |
+| valence = −1   |    1024 |   415 |      609 |     40.5% |
+
+### Naively surprising; genuinely informative
+
+The initial expectation — that valence = +1 would be "LTP-biased, strengthens weights, preserves slots" — is wrong given the default STDP parameters. The default rule has **a_minus (0.012) > a_plus (0.010)**, so under uncorrelated presynaptic / postsynaptic activity (the dominant regime in a random recurrent net), the STDP drift per spike pair is net-negative. With valence = +1, that net-negative drift pushes uncorrelated weights toward v_min = 0, where they sit for the 100-step dwell and get released.
+
+Under valence = −1 the rule flips: a_plus now does LTD and a_minus now does LTP, so the net drift under uncorrelated activity becomes positive (a_minus > a_plus ⇒ more LTP than LTD in the flipped-sign regime). Fewer weights reach v_min; fewer slots get released.
+
+**So: release is real and well-tuned.** ~60% of a fully-dense initial pool gets pruned under the default-asymmetric rule over 5 s of simulated time. The trajectory shape (fast initial pruning, plateau by chunk ~6–8) is qualitatively biologically plausible — an early mass-pruning phase followed by a stable working set, similar to the post-peak pruning in developmental biology.
+
+### What this tests and what it does not
+
+- **Tests**: release rule correctness (slots dwelling below threshold deactivate), persistence (slots above threshold keep counter at 0), preservation of `pre_ids` and `plasticity_rate` across release (they stay so subsequent acquisitions can reassign them).
+- **Does not yet test**: slot **acquisition** — the freed slots stay free for the rest of the sim, so the pool only contracts. Genuine developmental exuberance-and-pruning dynamics require formation as well. Acquisition needs PRNG threading through the scan carry (acquisition is stochastic per biology), and lands in its own step.
+- **Does not yet exercise**: structural plasticity under a GA outer loop. The step-5 GA does not pass `structural_params`. Step 6.5 or 7 will either add acquisition + integrate with the GA, or compare GA-on-static-topology vs. GA-on-dynamic-topology on the same task.
+
+### Silicon implications
+
+Release in silicon is cheap: a per-slot counter (4–8 bits is plenty at dwell = 100), a comparator reading v against a bias, and an AND gate gating the active flip-flop. Total area per slot: a comparator + counter + a few gates — negligible compared to the analog storage of v itself. The structural dynamics don't require anything fancier than what the existing slot cell already needs for weight storage.
+
+### What's genuinely new about this result
+
+- **Multiplicative-asymmetry-driven pruning matches developmental biology qualitatively.** No explicit "prune the weak" rule — just STDP with the standard a_minus > a_plus asymmetry + release dwell. The exuberance-to-sustained-working-set trajectory emerges from the mechanism rather than being programmed.
+- **The 60% pruning under valence = −1 is notable.** Even under a rule regime that should favor LTP on uncorrelated activity, more than half the pool releases. Suggests the initial half-normal v distribution (mean ~0.04, many values close to 0) gives a lot of the pool a short runway to v_min even under favorable dynamics.

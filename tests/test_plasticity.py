@@ -34,6 +34,7 @@ def _pool_with(
         v=v,
         plasticity_rate=plasticity_rate,
         active=active,
+        release_counter=jnp.zeros_like(pre_ids, dtype=jnp.int32),
     )
 
 
@@ -418,9 +419,10 @@ def test_each_gain_mode_raises_firing_with_elevated_adrenaline() -> None:
             params,
             gain_mode=mode,
         )
-        assert int(spikes_elev.sum()) >= int(spikes_base.sum()), (
+        assert int(spikes_elev.sum()) > int(spikes_base.sum()), (
             f"gain_mode={mode}: elevated adrenaline did not raise "
-            "firing count"
+            "firing count (strict >: a mode ignoring adrenaline "
+            "would fail here)"
         )
 
 

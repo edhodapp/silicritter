@@ -49,12 +49,19 @@ class SlotPool(NamedTuple):
         plasticity_rate: float32 in [0, 1]; 0 = innate / hardwired,
             1 = fully plastic. Reserved for step 4+ plasticity rules.
         active: bool, whether the slot is allocated (True) or free.
+        release_counter: int32, count of consecutive steps this slot's
+            v has sat below the structural-release threshold. Reset to
+            0 whenever v rises above the threshold or when the slot is
+            released. Reaches `release_dwell_steps` (see
+            `structural.StructuralParams`) triggers release. Ignored
+            when structural plasticity is not enabled.
     """
 
     pre_ids: jax.Array
     v: jax.Array
     plasticity_rate: jax.Array
     active: jax.Array
+    release_counter: jax.Array
 
 
 def init_random(
@@ -113,11 +120,15 @@ def init_random(
         dtype=jnp.float32,
     )
     active = jnp.ones((n_post, slots_per_post), dtype=jnp.bool_)
+    release_counter = jnp.zeros(
+        (n_post, slots_per_post), dtype=jnp.int32
+    )
     return SlotPool(
         pre_ids=pre_ids,
         v=v,
         plasticity_rate=plasticity_rate,
         active=active,
+        release_counter=release_counter,
     )
 
 
