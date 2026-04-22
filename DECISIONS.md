@@ -178,3 +178,68 @@ to drop the latter.
   be declined regardless of public visibility.
 - External readers can read, fork, and comply with AGPL terms; they
   cannot contribute upstream.
+
+### D006: Sim-first phased build — full behavioral simulation before lowering
+
+silicritter is built in four separable phases of increasing concreteness.
+Architecture is finalized at each phase before moving to the next;
+lowering-tool constraints from later phases do not casually alter
+earlier-phase decisions.
+
+1. **Idealized behavioral simulation** (JAX; current phase). Clean
+   abstractions, full expressive power, float32 ideal numerics, no
+   process noise. Validates system dynamics and architectural
+   choices. The current step 1-5 ladder (LIF, slot pool, three-factor
+   STDP, GA on the outer loop) lives here.
+2. **Noisy behavioral simulation** (still JAX). Introduces process
+   variation, transistor mismatch, capacitor leakage, quantized
+   per-slot v. Validates architectural robustness against silicon
+   reality before any circuit-level work. The inner plasticity loop
+   and outer GA run over populations of simulated dies rather than a
+   single ideal model; this is where the Thompson 1996 trap is
+   pre-emptively disarmed.
+3. **Circuit-level validation** (ngspice). Specific analog primitives
+   (LIF cell, slot cell, valence broadcast line, charge-write
+   circuitry, multi-neuromodulator bias lines) designed and proven to
+   reproduce the primitive the behavioral sim assumed. Primitive-by-
+   primitive, not the whole network.
+4. **Layout and tape-out** (Magic + KLayout + DRC / LVS). Physical
+   design informed by all three prior phases. Fab path per D004 /
+   D005 posture: Efabless chipIgnite is the default; TinyTapeout is
+   license-compatible and acceptable by fab feature match.
+
+**Rationale:** Ed's methodological inheritance from a Verilog
+instructor who was one of the early employees at Gateway Design
+Automation, the company that created Verilog in 1984 as a simulation
+language before synthesis existed. The teacher's principle: use the
+simulation language's full expressive power to get the design right
+before starting RTL. Starting in a restricted lowering subset means
+the synthesis tool's constraints shape architecture rather than
+design intent - you end up arguing about what you can build before
+deciding what you want. Separating "what do we want?" from "how do
+we build it?" is the actual win.
+
+Iteration cost scales sharply per phase (JAX: hours per cycle;
+ngspice: days; layout: weeks), so premature lowering spends the
+budget in the wrong place. Grothendieck's "rising sea" (see global
+CLAUDE.md on assembly philosophy and Lextrait reference): build
+foundational abstractions until the architecture feels inevitable,
+then the lowering writes itself. Naur's "programming is theory
+building" argues the same from a different direction.
+
+**Phase transitions:** declare architecture "frozen at Phase N"
+before beginning Phase N+1 work. Each phase has entry criteria
+(prior phase complete and validated) and exit criteria (architecture
+stable at this level). Revisiting an earlier phase in response to a
+lower-phase constraint is fine but must be deliberate, not
+incidental.
+
+**Not a waterfall:** within a phase, iteration is normal. The
+phases are about which level of concreteness is currently
+load-bearing, not gate-kept sequential development.
+
+**Known concession:** some abstractions used in Phase 1 are known
+to be silicon-hostile (perfectly exponential trace decay with a
+fixed tau, for instance - analog leakage is process-variable).
+These are flagged when introduced and revisited in Phase 2 rather
+than shaping Phase 1.
