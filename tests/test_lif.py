@@ -82,15 +82,19 @@ def test_simulate_returns_expected_shapes() -> None:
 
 
 def test_simulate_periodic_spiking_under_constant_drive() -> None:
-    """A constant suprathreshold drive produces a regular spike train."""
+    """Constant suprathreshold drive produces regular repeated spiking."""
     n = 2
     t = 200
     state = init_state(n)
     weights = jnp.zeros((n, n), dtype=jnp.float32)
-    # Drive well above threshold so the neuron spikes regularly.
+    # Drive of 50 mV with tau_m=20ms, dt=1ms gives a per-step voltage
+    # increment ~2.5 mV from near-rest, so V crosses V_thresh about every
+    # 6 ms. Over 200 ms per cell we expect ~30 spikes, ~60 total across
+    # two cells. Bounds are loose enough to absorb boundary-step effects
+    # but tight enough to catch single-spike-and-die failure modes.
     i_ext_trace = jnp.full((t, n), 50.0, dtype=jnp.float32)
     _, spike_trace = simulate(state, weights, i_ext_trace)
+    per_cell_counts = spike_trace.sum(axis=0)
+    assert bool(jnp.all(per_cell_counts >= 10))
     total_spikes = int(spike_trace.sum())
-    # A single cell under strong drive spikes many times over 200 ms;
-    # guard against zero-firing degenerate cases.
-    assert total_spikes > 0
+    assert 40 <= total_spikes <= 200
