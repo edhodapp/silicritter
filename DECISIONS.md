@@ -52,6 +52,13 @@ honors the "living creature" framing without claiming a specific species.
 
 ### D002: License - copyright Ed Hodapp, all rights reserved (proprietary, for now)
 
+**DEPRECATED 2026-04-22 03:04 UTC - superseded by D004.** Ed reassessed
+his IP posture: patents on silicritter-scale work are a long-shot and
+not worth optimizing for. AGPL-3.0-or-later with no external
+contributions accepted better supports his consulting-based monetization
+while preserving future licensing flexibility through consolidated
+copyright ownership. Original entry body preserved below.
+
 Initial license stance: fully proprietary. No rights granted to any party.
 This is a reservation, not a final choice - it keeps all downstream
 licensing options open (proprietary product, BSD-3-Clause flow into
@@ -76,6 +83,13 @@ crystallizes):
 
 ### D003: Hosting - private GitHub repository under `edhodapp` account
 
+**DEPRECATED 2026-04-22 03:04 UTC - visibility clause superseded by
+D005.** Repository flipped from private to public on 2026-04-22 once
+AGPL-3.0-or-later licensing was in place (D004). The
+"hosted-on-GitHub-under-edhodapp-account" aspect of D003 is unchanged;
+only the private visibility is superseded. Original entry body
+preserved below.
+
 `silicritter` is hosted as a **private** GitHub repository owned by the
 `edhodapp` account. Repo-local git config sets `user.name = edhodapp`
 and `user.email = ed@hodapp.com`; no global git config modified.
@@ -95,3 +109,72 @@ experimental-tier rule ("no build scaffolding or directory skeleton
 predicted in advance") is still honored; the repo holds only
 `LICENSE`, `.gitignore`, `CLAUDE.md`, `DECISIONS.md`, and
 `SESSION-HANDOFF.md` at initial commit.
+
+## 2026-04-22
+
+### D004: License - AGPL-3.0-or-later, no external contributions accepted
+
+**Supersedes:** D002 (deprecated 2026-04-22 03:04 UTC). Patent
+optionality, the primary rationale for D002's all-rights-reserved
+stance, is no longer load-bearing - Ed's assessment: patents on
+silicritter-scale work are a long-shot and not worth optimizing for.
+
+silicritter is licensed under the **GNU Affero General Public License,
+version 3, or (at your option) any later version** ("AGPL-3.0-or-later").
+Full license text in `LICENSE`.
+
+**No external contributions accepted** at this time. Pull requests,
+patches, and similar upstream submissions are declined. Rationale:
+consolidated copyright ownership (Ed Hodapp as sole author) preserves
+the widest set of future licensing options - relicense, dual-license
+(e.g., AGPL + commercial for clients who cannot accept network-copyleft
+terms), or open to contributions under a CLA later. Accepting external
+contributions under AGPL would lock those options down.
+
+**Consulting-compatible.** AGPL's strong copyleft (including Section
+13's network-use provision) means commercial users deploying
+silicritter-based services must either release their derivative works
+under AGPL or obtain a commercial license from Ed. The
+commercial-license path routes those users to Ed for consulting /
+licensing engagements. Standard AGPL-as-consulting-driver pattern
+(MongoDB pre-SSPL, Qt, Sentry, etc.).
+
+**Downstream directionality:** AGPL code cannot flow into proprietary
+sibling projects under BSD-style terms without violating AGPL.
+silicritter serves as reference / teaching artifact for Ed's proprietary
+projects; code does not flow in that direction without Ed unilaterally
+relicensing (which he can do as sole copyright holder, if and when
+desired).
+
+**Scope:** "for most things now" (Ed, 2026-04-22) - the whole silicritter
+codebase is AGPL-3.0-or-later as a default. Specific future components
+that need different licensing (e.g., MPW shuttle submission artifacts
+under shuttle-specific terms) are case-by-case decisions at that time,
+facilitated by Ed's sole-copyright-holder status.
+
+### D005: Visibility - GitHub repository flipped from private to public
+
+**Supersedes:** D003's visibility clause (deprecated 2026-04-22 03:04
+UTC). The "hosted on GitHub under edhodapp account" aspect of D003 is
+unchanged; only the private-to-public visibility change is superseded.
+
+Repository `edhodapp/silicritter` flipped from private to public on
+2026-04-22, once AGPL-3.0-or-later licensing was in place (D004).
+
+**Rationale:** Ed, 2026-04-22: "Let's open up silicritter for fun."
+With the license in place and the contribution policy explicit, there
+is no longer a principled reason to keep the repo private - the
+pre-release / discretion argument was contingent on patent optionality
+(which D004 removed) and a sense of "not yet ready to show." Ed chose
+to drop the latter.
+
+**Consequences:**
+- Commit history and content become publicly visible. Nothing in the
+  current repo contains sensitive material (no credentials, no
+  proprietary-sibling code, no commercial details).
+- AGPL binds on any distribution to third parties, including downstream
+  forks. Expected.
+- No-contributions-accepted policy (D004) stands; pull requests will
+  be declined regardless of public visibility.
+- External readers can read, fork, and comply with AGPL terms; they
+  cannot contribute upstream.
