@@ -225,3 +225,47 @@ Release in silicon is cheap: a per-slot counter (4–8 bits is plenty at dwell =
 
 - **Multiplicative-asymmetry-driven pruning matches developmental biology qualitatively.** No explicit "prune the weak" rule — just STDP with the standard a_minus > a_plus asymmetry + release dwell. The exuberance-to-sustained-working-set trajectory emerges from the mechanism rather than being programmed.
 - **The 60% pruning under valence = −1 is notable.** Even under a rule regime that should favor LTP on uncorrelated activity, more than half the pool releases. Suggests the initial half-normal v distribution (mean ~0.04, many values close to 0) gives a lot of the pool a short runway to v_min even under favorable dynamics.
+
+---
+
+## 2026-04-22 — Step 7: paired-agent signal-following primitive
+
+- **Modules landed:** `src/silicritter/paired.py` (NEW — `PairedState`, `init_paired_state`, `step_paired`, `simulate_paired`, `make_pool_for_partner`) and a refactor in `src/silicritter/plasticity.py` (`stdp_update` extracted as a public top-level function so paired sims can feed distinct pre / post rasters without touching the single-population `step_plastic` wrapper). `GAIN_MODULATORS` promoted from private to public.
+- **Experiment:** `experiments/step07_paired_signal_following.py`
+- **Scenario:** agent A externally driven by a 4-segment piecewise i_ext (18, 22, 19, 24 mV), slots 50% recurrent / 50% cross-bound into A via `pre_ids ∈ [0, 2N)` convention. A's scaffold is a fixed random pool shared across the whole GA population. Agent B receives no task-relevant external drive, only a tonic 16 mV baseline (so the subthreshold membrane has room for A's sparse cross-input to modulate firing rate rather than gate silent/spiking). B's scaffold is GA-evolved. Fitness = −MSE(B rate at window t, A rate at window t+1).
+- **Scale:** N = 32 per agent, K = 8, T = 2 000, pop = 32, gens = 30, window = 100 steps.
+
+### Primitive validation (the real step 7 deliverable)
+
+**The paired primitive works end-to-end.** 6 tests in `test_paired.py` cover:
+
+- Combined pre-space shapes (pool pre_ids ∈ [0, 2N), pre-trace length 2N, post-trace length N).
+- `step_paired` shape invariants.
+- `simulate_paired` per-agent spike traces of shape (T, N).
+- **Quantitative cross-agent synaptic influence**: pair of runs with cross-weight 0.5 vs. 0.0, identical everything else; the difference in B's post-step V matches the analytic expected synaptic contribution `0.5 × dt / τ_m = 0.025 mV` within 1e-5 tolerance. This test would fail if the cross-raster convention were inverted or the synaptic path didn't reach through to the combined pre-raster correctly.
+- Independence when cross-weights are zero: with A firing and B's cross-weights all zero, B stays completely silent — proves cross-influence is not leaking through any accidental back-channel.
+- Compatibility with structural release: paired sim with `structural_params` set releases slots on both agents as expected.
+
+### Signal-following task result (honestly reported)
+
+**GA fitness plateaus early and does not differentiate the population.** Best and mean fitness converge to the same value within the first generation or two and stay there: best ≈ mean ≈ −5.18e−4. B fires at roughly 20 Hz with occasional 10 Hz dips, not tracking A's 20–50 Hz piecewise profile in any obvious way.
+
+Per-generation eval: ~33 ms for the full 32-member population on MX150. Total 30-generation run: ~1 s.
+
+### What the task result means (and doesn't mean)
+
+The flat-fitness result is **consistent with step 5's finding** that direct-encoding GAs at N=32, pop~32-48 hit a fitness plateau early and don't recover without either bigger population / more generations or a better encoding (indirect / CPPN). Step 5's comparison across five adrenaline mechanisms showed mechanism choice matters substantially but none cleared a tight error bar at this scale; step 7 shows the same plateau behaviour on the paired-agent task.
+
+**What this test cannot conclude:** that the paired primitive is incapable of supporting signal-following. We haven't run a hand-wired-predictor control (an explicit B pool designed by hand to mirror A's activity with a one-step delay) to prove the scenario itself is solvable under the given modulator strength and cross-weight budget. Without that control the "plateau = GA limiter" conclusion is narrative, not evidentiary. A follow-up experiment would either (a) add a hand-wired control, (b) run the GA at pop=256, gens=200 to test the scale hypothesis, or (c) try an indirect encoding on this task.
+
+### Subsequent concrete questions for silicon or further experiments
+
+- What cross-weight magnitude is needed for A to meaningfully influence B without swamping B's self-recurrent dynamics? The current weight scale (~0.04 mean per slot) gives A's cross-contribution roughly parity with recurrent self-input — possibly why B's behaviour is dominated by its baseline tonic.
+- Should private modulators stay private once real social tasks arrive, or does a shared "environmental" modulator channel (pheromone-like) become architecturally meaningful? Not needed for step 7; likely needed for step 8+.
+- Indirect encoding is overdue. Direct encoding has now plateaued on two separate tasks (target firing rate, signal following) under the same pop/gens scale. The step 8 / 9 GA work should probably move to a CPPN-style indirect encoding before trying more tasks.
+
+### Scan / architectural notes
+
+- `PairedState` is a NamedTuple-of-NamedTuples pytree and threads cleanly through `jax.lax.scan` as the carry; no explicit pytree registration needed.
+- The two-phase `step_paired` (all LIF forward passes, then all STDP updates) means neither agent's STDP sees the partner's post-update state — verified by review. The intent "both neurons fire at the same wall-clock moment" is honored.
+- `stdp_update` now a public top-level function; `step_plastic` is a thin wrapper that preserves all existing behaviour and retains its single-population assertion. 48 tests, 100% branch coverage across 7 library modules.

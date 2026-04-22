@@ -162,7 +162,7 @@ def _modulate_threshold_shift(
     return shifted, jnp.asarray(tau_m_ms)
 
 
-_GAIN_MODULATORS: dict[
+GAIN_MODULATORS: dict[
     GainMode,
     Callable[
         [jax.Array, jax.Array, float, float],
@@ -228,6 +228,74 @@ def init_traces(n_pre: int, n_post: int) -> Traces:
     )
 
 
+def stdp_update(
+    pool: SlotPool,
+    traces: Traces,
+    pre_spike_source: jax.Array,
+    post_spikes: jax.Array,
+    valence: jax.Array,
+    params: STDPParams,
+    dt_ms: float = DT_MS,
+) -> tuple[SlotPool, Traces]:
+    """Run one step of STDP weight update + trace decay + spike increment.
+
+    Pure function split out of `step_plastic` so paired-agent sims can
+    feed distinct pre and post rasters (the pre vector may span the
+    agent's own population + partners it receives spikes from, while
+    post stays over the agent's own neurons).
+
+    Args:
+        pool: current SlotPool.
+        traces: current Traces. `traces.pre.shape[0]` must match the
+            pre-raster length `pre_spike_source.shape[0]`; `traces.post.
+            shape[0]` must match `post_spikes.shape[0]`.
+        pre_spike_source: spike vector to fold into the pre-trace for
+            the *next* step (shape (N_pre,), any bool or float dtype).
+            Conventionally the *current* step's output of whichever
+            population is upstream of this pool; in single-population
+            recurrent use it is the same vector as `post_spikes`.
+        post_spikes: this step's postsynaptic spike output, shape
+            (N_post,).
+        valence: scalar three-factor modulator.
+        params: STDP hyperparameters.
+        dt_ms: integration timestep in ms (for trace decay factor).
+
+    Returns:
+        (new_pool, new_traces) with updated pool.v, pool unchanged in
+        other fields, and traces decayed + incremented by this step's
+        spike contributions.
+    """
+    spike_post_f = post_spikes.astype(jnp.float32)
+    pre_spike_f = pre_spike_source.astype(jnp.float32)
+
+    decay_pre = jnp.exp(-dt_ms / params.tau_pre_ms)
+    decay_post = jnp.exp(-dt_ms / params.tau_post_ms)
+    # Pre-decayed traces: the trace value at the moment of this step's
+    # spike, before the step's own spike is folded in (Song/Miller/
+    # Abbott convention; avoids coincident-spike inflation).
+    pre_decayed = traces.pre * decay_pre
+    post_decayed = traces.post * decay_post
+
+    pre_trace_slot = pre_decayed[pool.pre_ids]
+    post_trace_slot = post_decayed[:, None]
+    pre_spike_slot = pre_spike_f[pool.pre_ids]
+    post_spike_slot = spike_post_f[:, None]
+
+    ltp = params.a_plus * post_spike_slot * pre_trace_slot
+    ltd = params.a_minus * pre_spike_slot * post_trace_slot
+    dv = (ltp - ltd) * valence * pool.plasticity_rate
+    dv = jnp.where(pool.active, dv, jnp.float32(0.0))
+
+    new_v = jnp.clip(pool.v + dv, params.v_min, params.v_max)
+    new_pool = pool._replace(v=new_v)
+
+    new_traces = Traces(
+        pre=pre_decayed + pre_spike_f,
+        post=post_decayed + spike_post_f,
+    )
+    return new_pool, new_traces
+
+
 def step_plastic(
     state: PlasticNetState,
     i_ext: jax.Array,
@@ -239,44 +307,39 @@ def step_plastic(
     dt_ms: float = DT_MS,
     tau_m_ms: float = TAU_M_MS,
 ) -> PlasticNetState:
-    """Advance one timestep of a plastic slot-pool network.
+    """Advance one timestep of a plastic single-population recurrent net.
+
+    Thin wrapper over `stdp_update`: computes the LIF forward pass using
+    the agent's own previous-step spikes as synaptic input, then applies
+    the single-population STDP convention where this step's output also
+    serves as the pre-spike source for trace update. Paired-agent sims
+    should call `stdp_update` directly with distinct pre/post rasters.
 
     Args:
         state: current PlasticNetState.
         i_ext: external current drive this step, shape (N_post,).
         valence: scalar three-factor modulator for this step.
-        adrenaline: scalar neural-gain modulator for this step. How it
-            acts depends on `gain_mode`; baseline adrenaline = 1.0
-            leaves every mode equivalent to the un-modulated dynamics.
+        adrenaline: scalar neural-gain modulator for this step.
         params: STDP hyperparameters.
-        gain_mode: selects how adrenaline modulates the LIF step. See
-            the GainMode Literal and the _GAIN_MODULATORS registry.
-            Default "multiplicative" reproduces step 4 / step 5
-            behaviour (i_total *= adrenaline).
-        structural_params: when provided, apply slot-release structural
-            plasticity after the weight update; when None (the default),
-            skip structural plasticity entirely and preserve step 4 / 5
-            byte-exact behaviour.
+        gain_mode: adrenaline gain mechanism; see the GainMode Literal.
+        structural_params: when set, apply slot release after the STDP
+            update.
         dt_ms: integration timestep in ms.
         tau_m_ms: LIF membrane time constant in ms.
 
     Returns:
-        Next PlasticNetState (new LIF, new pool.v, new traces, and
-        with released slots deactivated when structural_params is set).
+        Next PlasticNetState.
     """
-    # Single-population recurrent assumption: pre_ids index into the
-    # recurrent raster, which has the same length as the trace vectors.
-    # This assertion runs at JIT-trace time (shape check) and is free
-    # at runtime.
     assert state.traces.pre.shape[0] == state.traces.post.shape[0], (
         "plasticity.step_plastic assumes a single-population recurrent "
-        "network; pre and post trace vectors must have the same length."
+        "network; pre and post trace vectors must have the same length. "
+        "For paired-agent sims use paired.step_paired instead."
     )
 
     prev_spikes = state.lif.spikes
     i_syn = synaptic_current(state.pool, prev_spikes)
     base_i_total = i_ext + i_syn
-    modulator = _GAIN_MODULATORS[gain_mode]
+    modulator = GAIN_MODULATORS[gain_mode]
     i_total, tau_eff = modulator(
         base_i_total, adrenaline, tau_m_ms, dt_ms
     )
@@ -285,40 +348,18 @@ def step_plastic(
     )
     new_lif = LIFState(v=v_next, spikes=spike_post)
 
-    spike_post_f = spike_post.astype(jnp.float32)
-    decay_pre = jnp.exp(-dt_ms / params.tau_pre_ms)
-    decay_post = jnp.exp(-dt_ms / params.tau_post_ms)
-    # Pre-decayed traces: the trace value at the moment of this step's
-    # spike, before the step's own spike is folded in. Using these in
-    # the STDP update follows Song/Miller/Abbott and avoids the
-    # coincident-spike inflation a post-increment trace would produce.
-    pre_decayed = state.traces.pre * decay_pre
-    post_decayed = state.traces.post * decay_post
+    new_pool, new_traces = stdp_update(
+        state.pool,
+        state.traces,
+        pre_spike_source=spike_post,
+        post_spikes=spike_post,
+        valence=valence,
+        params=params,
+        dt_ms=dt_ms,
+    )
 
-    pre_trace_slot = pre_decayed[state.pool.pre_ids]
-    post_trace_slot = post_decayed[:, None]
-    pre_spike_slot = spike_post_f[state.pool.pre_ids]
-    post_spike_slot = spike_post_f[:, None]
-
-    ltp = params.a_plus * post_spike_slot * pre_trace_slot
-    ltd = params.a_minus * pre_spike_slot * post_trace_slot
-    dv = (ltp - ltd) * valence * state.pool.plasticity_rate
-    dv = jnp.where(state.pool.active, dv, jnp.float32(0.0))
-
-    new_v = jnp.clip(state.pool.v + dv, params.v_min, params.v_max)
-    new_pool = state.pool._replace(v=new_v)
-
-    # Structural plasticity (slot release) after weight update. Runs
-    # before folding this step's spike into the traces so next-step
-    # plasticity sees the post-release pool.
     if structural_params is not None:
         new_pool = apply_release(new_pool, structural_params)
-
-    # Finally fold this step's spike into the traces for the next step.
-    new_traces = Traces(
-        pre=pre_decayed + spike_post_f,
-        post=post_decayed + spike_post_f,
-    )
 
     return PlasticNetState(lif=new_lif, pool=new_pool, traces=new_traces)
 
