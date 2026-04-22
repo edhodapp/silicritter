@@ -1,0 +1,139 @@
+# silicritter
+
+An analog-neural-silicon exploration that aims to emulate **living-creature neural networks** — specifically the *developmental* arc of plasticity (synaptic exuberance in early life, followed by lifelong sculpting) rather than the adult steady state that most neuromorphic work targets.
+
+Exploratory / blue-sky research. Single author. No chip yet.
+
+---
+
+## Goals
+
+### Long-term aim
+
+A silicon substrate, in standard CMOS (SkyWater 130nm open PDK), that runs biologically-grounded neural dynamics with:
+
+- **Structural plasticity** via a per-postsynaptic-neuron slot pool — synapses are not a fixed N×N matrix but a pool of discrete slots that can be formed, strengthened, weakened, and eventually released. Most analog-neuromorphic chips approximate pruning by driving weights toward zero; silicritter aims at genuine reclamation and rebinding.
+- **Multi-modulator broadcast chemistry**. Not a single scalar "reward" line. A palette of broadcast signals — valence (dopamine-like, phasic), adrenaline (norepinephrine-like, neural-gain modulator), later cortisol / oxytocin / vasopressin / BDNF analogs — each with its own timescale, source, and plasticity targets. Added one at a time as specific experiments require them; not pre-committed as a full suite.
+- **Innate scaffolds optimised by genetic algorithms**, lifetime scaffolds learned by spike-timing-dependent plasticity gated by the modulator palette. Two-timescale architecture: outer loop is evolution (offline, tunes the scaffold), inner loop is lifetime learning (on-chip / in-sim, tunes weights in the scaffold).
+- **Long-term directional pull toward social intelligence.** Social-like dynamics appear at surprisingly simple substrates (slime-mold aggregation, bacterial quorum sensing), so silicon-scale social behaviour need not wait for brain-scale networks. Dogs are the aspirational model per Pat Shipman's *The Invaders* (2015); the near-term tractable targets are minimal paired-agent feedback, gaze-following, and pair-bonding circuits.
+
+### Build methodology
+
+Four separable phases of increasing concreteness; architecture is finalized at each phase before lowering to the next. Iteration cost scales roughly hours → days → weeks per phase, so premature lowering spends the budget in the wrong place. This principle is inherited from a Verilog instructor who was one of the early Gateway Design Automation employees — Verilog was a simulation language before synthesis existed, and using the full expressive power of the sim to get the design right before starting RTL is what that lineage teaches. The same argument has cleaner form in Naur's 1985 *Programming as Theory Building*, Grothendieck's "rising sea" metaphor, and Vincent Lextrait's *Software Development or the Art of Abstraction Crafting* (see `DECISIONS.md` D006 for the full statement).
+
+Phases:
+
+1. **Idealised behavioural simulation** (JAX). Clean abstractions, ideal numerics, no process noise. *Current phase.*
+2. **Noisy behavioural simulation** (still JAX). Process variation, transistor mismatch, capacitor leakage, quantized per-slot v. Validates architectural robustness against silicon reality before any circuit-level work. This is where the Thompson-trap (from the 1996 "evolved FPGA circuit exploits parasitics") is pre-emptively disarmed.
+3. **Circuit-level validation** (ngspice). Specific analog primitives — LIF cell, slot cell, valence broadcast, multi-neuromodulator bias lines. Primitive-by-primitive, not the whole network.
+4. **Layout and tape-out** (Magic + Xschem + KLayout + DRC/LVS). Efabless chipIgnite is the default fab path; TinyTapeout is also license-compatible.
+
+---
+
+## Present status (Phase 1, steps 1–5 complete)
+
+What exists today is an idealised JAX simulation of a single plastic spiking network with one chemical-signal modulator beyond valence, driven by a direct-encoding genetic algorithm that evolves initial scaffolds. No chip, no circuit-level validation yet.
+
+### Modules (`src/silicritter/`)
+
+- **`lif.py`** — Leaky integrate-and-fire neuron forward simulation. `init_state`, `integrate_and_spike`, `step` (dense-weight variant), `simulate`. Module-level invariant asserts on V_REST / V_THRESH / V_RESET and positive τ_m / dt. 100% branch coverage.
+- **`slotpool.py`** — Slot-pool synapse representation. `SlotPool` NamedTuple with per-slot `pre_ids`, `v`, `plasticity_rate`, and `active`; synaptic input computed via gather-and-sum over the pool. Effective dense-matrix view available for validation. Forward sim (`step`, `simulate`) byte-exactly matches the `lif.py` dense path at matched weights. 100% branch coverage.
+- **`plasticity.py`** — Three-factor STDP on the slot pool, with pre-decayed eligibility traces (Song/Miller/Abbott convention) and two modulators:
+  - `valence` — scalar, gates STDP sign and magnitude (dopamine-like phasic three-factor signal).
+  - `adrenaline` — scalar, multiplies `i_total` at the LIF integration step (norepinephrine-like gain modulation, Aston-Jones & Cohen 2005).
+
+  Weights clipped to `[v_min, v_max]`. Slot `plasticity_rate = 0` means innate / hardwired. 100% branch coverage.
+- **`ga.py`** — Direct-encoding genetic-algorithm primitives. `Genome` (three parallel arrays per individual), `random_genome`, `random_population`, `decode_to_pool`, `tournament_select` (with-replacement sampling, documented), `uniform_crossover` (with a Baldwin-interference caveat documented), `mutate` with bound preservation. 100% branch coverage.
+
+### Experiments (`experiments/`)
+
+Each step's self-contained runnable. See `perf_history.md` for measured numbers on the reference machine (Huawei MateBook X Pro 2018, i7-8550U + NVIDIA MX150, 2 GB VRAM).
+
+- **`step02_throughput.py`** — LIF forward-sim throughput on dense weights. Baseline: 8.35e6 neuron-steps / s, 40 Hz firing rate, N=1024, T=10 000.
+- **`step03_slotpool_throughput.py`** — Same scenario with slot-pool synapses (K=64). Baseline: 4.17e7 neuron-steps / s (~5× over dense).
+- **`step04_plastic_throughput.py`** — Slot pool + three-factor STDP + valence + adrenaline. Baseline: 1.78e7 neuron-steps / s (~2.4× slower than step 3 for the plasticity overhead). Mean v drifts 0.040 → 0.093 over 10 s simulated time; at least one slot saturates to `v_max`.
+- **`step05_ga_target_rate.py`** — GA outer loop evolving scaffolds to track a time-varying target firing rate driven by a piecewise adrenaline signal. Inner-loop sims are `vmap`ped across the population. ~22 ms per generation on MX150; 80 generations in ~1.8 s at N=32, K=8, T=2 000, pop=48. Three of four adrenaline segments track within ~8 Hz; one segment exposes a floor problem in the multiplicative-gain mechanism (low adrenaline pushes some cells below V_THRESH, uncorrectable by weight tuning).
+
+### Tests (`tests/`)
+
+31 behavioural and unit tests. `pytest --cov --cov-branch` reports **100% branch coverage** across all four library modules.
+
+### Quality gates
+
+Every commit that changes functional code runs through:
+
+- `flake8 --max-complexity=5 --max-line-length=80`
+- `mypy --strict` (all type annotations checked)
+- `pylint` with the Google Python Style Guide `pylintrc`
+- `pytest --cov --cov-branch` (100% branch coverage target)
+
+Plus independent code review by an isolated Claude subagent (clean context, no project knowledge) and advisory review by Gemini, both running from `~/tools/code-review/`.
+
+### What is deliberately not yet implemented
+
+- **Structural slot release / acquisition** — "exuberance and pruning" proper. Slots with `v = v_min = 0` are functionally silent but still structurally bound; the free pool is unused. This is the missing piece before the project can claim genuine developmental dynamics.
+- **Additional chemical signals** — cortisol, oxytocin, vasopressin, BDNF, NO. Added one at a time as specific experiments need them.
+- **Noisy behavioural sim (Phase 2)** — process variation, transistor mismatch, capacitor leakage, quantization. Starts when Phase 1 architecture is declared frozen.
+- **Circuit-level validation (Phase 3)** and **layout / tape-out (Phase 4)**.
+- **Indirect-encoding GA** — direct encoding blows up at N > a few hundred; indirect (CPPN / developmental rules, HyperNEAT-style) is the scaling path. Not needed yet at toy scale.
+- **Multi-agent / social scenarios** — any social-intelligence target implies at minimum two silicritter instances whose spike outputs feed each other's inputs. Not yet wired.
+
+---
+
+## Running locally
+
+Developed on Python 3.12 with a virtualenv in `.venv/`:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+```
+
+Dependencies pull in `jax[cuda12]` with bundled NVIDIA CUDA 12 runtime libraries. An NVIDIA GPU (CC 6.0+, ~1 GB free VRAM) is required for the GPU-backed experiments; everything falls back to CPU if no GPU is present but will be much slower.
+
+Run the experiments:
+
+```bash
+.venv/bin/python experiments/step02_throughput.py
+.venv/bin/python experiments/step03_slotpool_throughput.py
+.venv/bin/python experiments/step04_plastic_throughput.py
+.venv/bin/python experiments/step05_ga_target_rate.py
+```
+
+Run tests:
+
+```bash
+.venv/bin/pytest tests/
+```
+
+---
+
+## Project documentation
+
+- **`DECISIONS.md`** — architectural decision log. Immutable entries, D001 (project name) through D006 (sim-first phased-build methodology). Supersession annotations on deprecated entries. Read this for the history of why the project looks the way it does.
+- **`CLAUDE.md`** — project-local instructions for Claude Code sessions.
+- **`perf_history.md`** — durable performance log. One entry per significant experiment run, with measured numbers and honest commentary on what was and wasn't demonstrated.
+- **`SESSION-HANDOFF.md`** — origin context from the 2026-04-21 session that spawned this project.
+
+---
+
+## License and contributions
+
+Licensed **GNU AGPL-3.0-or-later**. See `LICENSE` for the canonical license text and `COPYRIGHT` for the copyright statement, SPDX identifier, and contribution policy.
+
+Ed Hodapp is the sole author and sole copyright holder. **External contributions (pull requests, patches) are not accepted at this time.** Consolidated copyright ownership preserves future licensing flexibility — relicensing, dual-licensing for commercial clients who cannot accept AGPL's network-copyleft, or opening to contributions under a CLA later. Accepting external contributions under AGPL would lock those options down. Pull requests will be declined, not merged.
+
+Commercial users who need to deploy silicritter-based work without AGPL obligations should contact Ed for a commercial-license / consulting engagement.
+
+---
+
+## Acknowledgements and influences
+
+- Pat Shipman, *The Invaders: How Humans and Their Dogs Drove Neanderthals to Extinction* (Harvard University Press, 2015) — directional pull toward social intelligence as the long-term target.
+- Anthony Zador, "A critique of pure learning and what artificial neural networks can learn from animal brains" (*Nature Communications*, 2019) — the aligned manifesto for innate-scaffold-plus-lifetime-learning architecture.
+- Carver Mead, *Analog VLSI and Neural Systems* (1989) and the subsequent Mahowald / Sarpeshkar / Indiveri / Mead-lineage neuromorphic literature — the analog substrate this project aims to land on eventually.
+- Vincent Lextrait, *Software Development or the Art of Abstraction Crafting* — the methodological backbone; abstraction is not factorization.
+- Peter Naur, "Programming as Theory Building" (1985) and Alexander Grothendieck's "rising sea" metaphor — the longer lineage of the same argument.
+- Song, Miller, Abbott (2000), Izhikevich (2007), Frémaux & Gerstner (2016) — the STDP and three-factor-rule literature underlying `plasticity.py`.
+- Aston-Jones & Cohen (2005) — adaptive-gain theory of the noradrenergic system, underlying the `adrenaline` modulator.
+- Adrian Thompson (1996), "An evolved circuit, intrinsic in silicon, entwined with physics" — the cautionary prior art for evolvable analog hardware.
