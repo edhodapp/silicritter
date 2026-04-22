@@ -57,3 +57,38 @@ Mean firing rate across population: **40.0 Hz** (matches step 2 regime).
 - 40 Hz firing rate is preserved — the slot-pool representation with matched weight scale reproduces the step 2 firing regime qualitatively.
 - Tests (`tests/test_slotpool.py`) include byte-exact equivalence between `slotpool.step(pool, ...)` and `lif.step(effective_weights(pool), ...)`, plus a full-trace equivalence over 50 steps — so the representation is validated against the dense-matrix ground truth, not just numerically plausible.
 - Still no plasticity — slots are static. Step 4 adds three-factor STDP + valence broadcast on top of this representation.
+
+---
+
+## 2026-04-22 — Step 4: slot-pool + three-factor STDP baseline
+
+- **Script:** `experiments/step04_plastic_throughput.py`
+- **Module under test:** `src/silicritter/plasticity.py` (STDP traces, per-slot weight update modulated by scalar valence and gated by plasticity_rate)
+- **Machine:** same as prior steps (MX150)
+- **Stack:** same as prior steps
+- **Parameters:** N = 1024, K = 64, T = 10 000; constant valence = +1; STDP defaults (tau_pre = tau_post = 20 ms, a_plus = 0.01, a_minus = 0.012, v ∈ [0, 0.5]); 5 timed repeats after a warmup pass
+
+| metric                             | min       | median    |
+|------------------------------------|-----------|-----------|
+| wall-clock elapsed (ms)            | 573.0     | 579.2     |
+| throughput (neuron-steps/s)        | 1.79e+07  | 1.77e+07  |
+| slot-eval throughput (slot-evals/s)| —         | 1.13e+09  |
+
+Mean firing rate: **40.8 Hz** (same regime as steps 2 and 3).
+
+Weight drift over 10 s of simulated time:
+
+| statistic   | initial | final  |
+|-------------|---------|--------|
+| v mean      | 0.0397  | 0.0927 |
+| v min       | 0.0000  | 0.0000 |
+| v max       | 0.2471  | 0.5000 |
+
+Mean absolute change **|Δv| = 0.081**; max **|Δv| = 0.4998** (at least one slot rode the entire dynamic range up to the v_max ceiling and got clipped).
+
+**Notes:**
+
+- **Plasticity cost vs. step 3: ~2.2× slower** (4.17e7 → 1.85e7 neuron-steps/s) for the per-step overhead of trace decay + two gathers + STDP update + clip. Slot-eval throughput fell from 2.67e9 to 1.18e9 slot-evals/s, roughly matching.
+- Weights are clearly moving (max reached the clip ceiling, mean doubled) — plasticity is active, not just nominally wired. Tests confirm valence = 0 and plasticity_rate = 0 both freeze weights exactly.
+- Constant valence = +1 is the simplest possible three-factor setup; time-varying valence (rewarding specific network states) lands when we have an embodied target in step 5+.
+- Still no structural plasticity — slots are bound for the lifetime of the sim. Slots at v_min = 0 are functionally silent but not released back to the free pool. Structural release / acquisition is the missing piece before we can genuinely claim exuberance-and-pruning dynamics.

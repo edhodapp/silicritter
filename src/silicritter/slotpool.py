@@ -77,7 +77,10 @@ def init_random(
         n_pre: number of presynaptic neurons.
         slots_per_post: K, pool capacity per postsynaptic neuron.
         rng: JAX PRNGKey.
-        weight_scale: std-dev of the initial per-slot v distribution.
+        weight_scale: scale of the underlying N(0, 1) before absolute
+            value; the realized per-slot v is drawn from the half-
+            normal |N(0, 1)| * weight_scale (mean approx
+            0.798 * weight_scale, std approx 0.603 * weight_scale).
         default_plasticity_rate: initial plasticity rate for all slots.
 
     Returns:
@@ -91,9 +94,16 @@ def init_random(
         maxval=n_pre,
         dtype=jnp.int32,
     )
+    # Half-normal sample: |N(0, 1)| * scale. Keeps v non-negative so the
+    # default v_min = 0 clip in the plasticity module doesn't silently
+    # alter the initial pool on the first update. Excitatory-only is the
+    # natural convention at this step; a separate inhibitory pool or a
+    # signed variant can land when we need it.
     v = (
-        jax.random.normal(
-            k_v, (n_post, slots_per_post), dtype=jnp.float32
+        jnp.abs(
+            jax.random.normal(
+                k_v, (n_post, slots_per_post), dtype=jnp.float32
+            )
         )
         * weight_scale
     )
