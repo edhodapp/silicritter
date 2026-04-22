@@ -38,8 +38,8 @@ def _build_inputs(
     slots_per_post: int,
     n_timesteps: int,
     seed: int,
-) -> tuple[PlasticNetState, jax.Array, jax.Array]:
-    """Construct initial state, drive trace, and constant valence trace."""
+) -> tuple[PlasticNetState, jax.Array, jax.Array, jax.Array]:
+    """Construct initial state, drive, valence, and adrenaline traces."""
     rng = jax.random.PRNGKey(seed)
     pool_key, drive_key = jax.random.split(rng)
     pool = init_random(
@@ -57,12 +57,14 @@ def _build_inputs(
         dtype=jnp.float32,
     )
     valence_trace = jnp.ones((n_timesteps,), dtype=jnp.float32)
+    # Baseline adrenaline preserves step-4 dynamics unchanged.
+    adrenaline_trace = jnp.ones((n_timesteps,), dtype=jnp.float32)
     state = PlasticNetState(
         lif=init_state(n_neurons),
         pool=pool,
         traces=init_traces(n_pre=n_neurons, n_post=n_neurons),
     )
-    return state, i_ext_trace, valence_trace
+    return state, i_ext_trace, valence_trace, adrenaline_trace
 
 
 def run(
@@ -72,7 +74,7 @@ def run(
     seed: int = 0,
 ) -> None:
     """Warm up JIT, then run N_REPEATS timed passes; print metrics."""
-    state, i_ext_trace, valence_trace = _build_inputs(
+    state, i_ext_trace, valence_trace, adrenaline_trace = _build_inputs(
         n_neurons, slots_per_post, n_timesteps, seed
     )
     params = default_params()
@@ -81,20 +83,23 @@ def run(
         s: PlasticNetState,
         i_ext: jax.Array,
         val: jax.Array,
+        adr: jax.Array,
     ) -> tuple[PlasticNetState, jax.Array]:
-        return simulate_plastic(s, i_ext, val, params)
+        return simulate_plastic(s, i_ext, val, adr, params)
 
     sim_jit = jax.jit(_sim)
 
     # Warmup also primes the accumulators, avoiding an Optional dance.
-    final_state, final_spikes = sim_jit(state, i_ext_trace, valence_trace)
+    final_state, final_spikes = sim_jit(
+        state, i_ext_trace, valence_trace, adrenaline_trace
+    )
     final_spikes.block_until_ready()
 
     elapsed_s: list[float] = []
     for _ in range(N_REPEATS):
         t0 = time.perf_counter()
         final_state, final_spikes = sim_jit(
-            state, i_ext_trace, valence_trace
+            state, i_ext_trace, valence_trace, adrenaline_trace
         )
         final_spikes.block_until_ready()
         elapsed_s.append(time.perf_counter() - t0)

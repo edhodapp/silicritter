@@ -42,6 +42,19 @@ therefore both over the recurrent raster, and both are fed by
 `spike_post` from the LIF step. `step_plastic` asserts dimensional
 consistency; a separate-pre-population variant will need a broader
 API that accepts distinct spike rasters.
+
+Chemical-signal analogs: step 4 introduced one broadcast signal
+(valence) as a scalar modulator gating STDP updates. Step 5 adds a
+second scalar signal (adrenaline) acting as a neural-gain modulator
+at the LIF integration step. The design choice is to add chemical
+signals one at a time as specific experiments require them, rather
+than pre-commit to a palette of modulators. Adrenaline is
+biologically motivated by Aston-Jones & Cohen 2005 (noradrenergic
+system raises neural gain; tonic and phasic components); the silicon
+interpretation is a dedicated analog broadcast line whose value
+scales effective input current to every post-neuron. A third, fourth,
+etc. modulator will trigger a refactor into a Modulators struct, but
+not before.
 """
 
 from __future__ import annotations
@@ -110,6 +123,7 @@ def step_plastic(
     state: PlasticNetState,
     i_ext: jax.Array,
     valence: jax.Array,
+    adrenaline: jax.Array,
     params: STDPParams,
     dt_ms: float = DT_MS,
     tau_m_ms: float = TAU_M_MS,
@@ -125,6 +139,12 @@ def step_plastic(
             scale *and* sign-flip the update, so the asymmetry between
             a_plus and a_minus carries through with reversed sign.
             Zero gates all plasticity off.
+        adrenaline: scalar neural-gain modulator. Multiplies the total
+            input current (i_ext + i_syn) at the LIF integration step.
+            Baseline is 1.0 (unmodulated). Higher values raise effective
+            drive and therefore firing rate; lower values suppress.
+            Negative values invert the drive; this is nonphysical in
+            biology but mathematically well-defined.
         params: STDP hyperparameters.
         dt_ms: integration timestep in ms.
         tau_m_ms: LIF membrane time constant in ms.
@@ -143,7 +163,7 @@ def step_plastic(
 
     prev_spikes = state.lif.spikes
     i_syn = synaptic_current(state.pool, prev_spikes)
-    i_total = i_ext + i_syn
+    i_total = (i_ext + i_syn) * adrenaline
     v_next, spike_post = integrate_and_spike(
         state.lif.v, i_total, dt_ms, tau_m_ms
     )
@@ -185,14 +205,18 @@ def simulate_plastic(
     initial_state: PlasticNetState,
     i_ext_trace: jax.Array,
     valence_trace: jax.Array,
+    adrenaline_trace: jax.Array,
     params: STDPParams,
 ) -> tuple[PlasticNetState, jax.Array]:
-    """Simulate a plastic slot-pool network over a drive + valence trace.
+    """Simulate a plastic slot-pool network over drive + modulator traces.
 
     Args:
         initial_state: starting PlasticNetState.
         i_ext_trace: external current per timestep, shape (T, N_post).
         valence_trace: scalar valence per timestep, shape (T,).
+        adrenaline_trace: scalar adrenaline (gain modulator) per
+            timestep, shape (T,). Baseline 1.0 preserves step 3
+            dynamics.
         params: STDP hyperparameters.
 
     Returns:
@@ -202,13 +226,17 @@ def simulate_plastic(
 
     def scan_step(
         state: PlasticNetState,
-        drive: tuple[jax.Array, jax.Array],
+        drive: tuple[jax.Array, jax.Array, jax.Array],
     ) -> tuple[PlasticNetState, jax.Array]:
-        i_ext_t, valence_t = drive
-        next_state = step_plastic(state, i_ext_t, valence_t, params)
+        i_ext_t, valence_t, adrenaline_t = drive
+        next_state = step_plastic(
+            state, i_ext_t, valence_t, adrenaline_t, params
+        )
         return next_state, next_state.lif.spikes
 
     final_state, spike_trace = jax.lax.scan(
-        scan_step, initial_state, (i_ext_trace, valence_trace)
+        scan_step,
+        initial_state,
+        (i_ext_trace, valence_trace, adrenaline_trace),
     )
     return final_state, spike_trace
