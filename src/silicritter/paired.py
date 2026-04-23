@@ -117,11 +117,18 @@ def _lif_forward(
     i_ext: jax.Array,
     adrenaline: jax.Array,
     gain_mode: GainMode,
+    combined_is_inhibitory: jax.Array | None,
+    i_weight_multiplier: float,
     dt_ms: float,
     tau_m_ms: float,
 ) -> LIFState:
     """Run one agent's LIF forward pass under the combined pre-raster."""
-    i_syn = synaptic_current(own_state.pool, combined_prev)
+    i_syn = synaptic_current(
+        own_state.pool,
+        combined_prev,
+        pre_is_inhibitory=combined_is_inhibitory,
+        i_weight_multiplier=i_weight_multiplier,
+    )
     base_i_total = i_ext + i_syn
     modulator = GAIN_MODULATORS[gain_mode]
     i_total, tau_eff = modulator(base_i_total, adrenaline, tau_m_ms, dt_ms)
@@ -155,6 +162,16 @@ def _apply_agent_plasticity(
     return PlasticNetState(lif=new_lif, pool=new_pool, traces=new_traces)
 
 
+def _combine_ei_if_set(
+    own_ei: jax.Array | None,
+    partner_ei: jax.Array | None,
+) -> jax.Array | None:
+    """Return combined [own, partner] E/I array, or None if either missing."""
+    if own_ei is None or partner_ei is None:
+        return None
+    return jnp.concatenate([own_ei, partner_ei])
+
+
 def step_paired(
     state: PairedState,
     i_ext_a: jax.Array,
@@ -166,6 +183,9 @@ def step_paired(
     stdp_params: STDPParams,
     gain_mode: GainMode = "multiplicative",
     structural_params: StructuralParams | None = None,
+    a_is_inhibitory: jax.Array | None = None,
+    b_is_inhibitory: jax.Array | None = None,
+    i_weight_multiplier: float = 4.0,
     dt_ms: float = DT_MS,
     tau_m_ms: float = TAU_M_MS,
 ) -> PairedState:
@@ -175,6 +195,14 @@ def step_paired(
     each agent's previous-step combined pre-raster [own, partner].
     Phase 2 runs each agent's STDP update using the newly computed
     combined spike_post as the pre-spike source.
+
+    E/I substrate is opt-in. When `a_is_inhibitory` and
+    `b_is_inhibitory` are provided (bool arrays of length N_A, N_B),
+    synaptic_current applies the cortical-balanced-network convention:
+    contributions sourced from inhibitory pre-neurons are negated and
+    scaled by `i_weight_multiplier` (default 4.0). When either E/I
+    array is None, every pre is treated as excitatory and behavior
+    is byte-exact to the step 2-8 code path.
     """
     # Phase 1: combined prev spikes for each agent's synaptic input.
     combined_prev_a = jnp.concatenate(
@@ -183,13 +211,15 @@ def step_paired(
     combined_prev_b = jnp.concatenate(
         [state.b.lif.spikes, state.a.lif.spikes]
     )
+    combined_ei_a = _combine_ei_if_set(a_is_inhibitory, b_is_inhibitory)
+    combined_ei_b = _combine_ei_if_set(b_is_inhibitory, a_is_inhibitory)
     new_lif_a = _lif_forward(
         state.a, combined_prev_a, i_ext_a, adrenaline_a,
-        gain_mode, dt_ms, tau_m_ms,
+        gain_mode, combined_ei_a, i_weight_multiplier, dt_ms, tau_m_ms,
     )
     new_lif_b = _lif_forward(
         state.b, combined_prev_b, i_ext_b, adrenaline_b,
-        gain_mode, dt_ms, tau_m_ms,
+        gain_mode, combined_ei_b, i_weight_multiplier, dt_ms, tau_m_ms,
     )
 
     # Phase 2: combined new spikes for STDP pre-spike source.
@@ -233,11 +263,15 @@ def simulate_paired(
     stdp_params: STDPParams,
     gain_mode: GainMode = "multiplicative",
     structural_params: StructuralParams | None = None,
+    a_is_inhibitory: jax.Array | None = None,
+    b_is_inhibitory: jax.Array | None = None,
+    i_weight_multiplier: float = 4.0,
 ) -> tuple[PairedState, jax.Array, jax.Array]:
     """Simulate a paired-agent sim over T steps.
 
     Returns the final state plus both agents' spike traces, each of
-    shape (T, n_neurons).
+    shape (T, n_neurons). E/I substrate is opt-in via the
+    `*_is_inhibitory` arguments; see step_paired docstring.
     """
 
     def scan_step(
@@ -251,6 +285,9 @@ def simulate_paired(
             stdp_params,
             gain_mode=gain_mode,
             structural_params=structural_params,
+            a_is_inhibitory=a_is_inhibitory,
+            b_is_inhibitory=b_is_inhibitory,
+            i_weight_multiplier=i_weight_multiplier,
         )
         return next_state, (next_state.a.lif.spikes, next_state.b.lif.spikes)
 

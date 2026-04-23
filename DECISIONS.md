@@ -243,3 +243,60 @@ to be silicon-hostile (perfectly exponential trace decay with a
 fixed tau, for instance - analog leakage is process-variable).
 These are flagged when introduced and revisited in Phase 2 rather
 than shaping Phase 1.
+
+### D007: Inhibition substrate - canonical E/I values adopted provisionally
+
+silicritter adopts canonical cortical E/I balanced-network values
+as the inhibitory substrate, added to `silicritter.slotpool` and
+`silicritter.paired` with optional `pre_is_inhibitory` parameters:
+
+- **E:I ratio = 4:1** (80 % excitatory, 20 % inhibitory neurons per
+  population). Inhibitory neurons occupy the last 20 % of indices
+  by default via `assign_ei_identity(n_neurons, 0.2)`.
+- **I-weight multiplier = 4.0** (inhibitory-sourced contributions
+  are negated and scaled 4x relative to excitatory-sourced). This
+  matches the classical van Vreeswijk & Sompolinsky 1996-style
+  balanced-network condition where 20 % of pres deliver 4x per-
+  synapse current to balance the 80 % excitatory majority.
+
+These values are literature-canonical (Vogels/Abbott 2005,
+balanced-network foundations), not silicritter-specific
+derivations. Step 9 validated that the substrate behaves as
+predicted at these values (canonical balanced cross produces near-
+zero mean input; E-targeted cross preserves step 7c fitness; I-
+targeted cross produces silence).
+
+**Provisional, not validated for silicritter's specific
+architecture.** Literature canonical values were derived for
+continuous-weight rate-coded cortical models. silicritter uses
+discrete slot-pool representations, structural plasticity,
+multi-modulator chemistry, and spike-based LIF dynamics. The
+canonical values may need tuning for stable dynamics in this
+specific substrate. We commit them as the starting prior rather
+than sweeping them.
+
+**Configurability preserved by design.** `synaptic_current`,
+`step_paired`, and `simulate_paired` all take
+`i_weight_multiplier` as a parameter with default 4.0. The E/I
+identity bool array is passed explicitly, so the fraction can be
+varied at the call site without touching the library. Future
+perturbation experiments can sweep these values without refactor.
+
+**What we owe.** A step in the Step 11 range (per the post-step-
+9/10 plan) runs a systematic perturbation sweep across E:I ratio
+and i_weight_multiplier, validating that our commitment was
+correct or measuring where the real optimum sits for silicritter's
+architecture. Punch list items to probe first:
+
+1. i_weight_multiplier variation (primary axis - does 4.0 really
+   balance at our v_max of 2.0?).
+2. Inhibitory fraction (fewer / more I neurons).
+3. Interaction with structural release (do I-slots release
+   faster / slower than E-slots under the default rule?).
+4. Interaction with task drive regime (strongly excited tasks
+   may prefer different balance than weakly excited ones).
+
+**Not yet adopted:** inhibitory-specific STDP rules (Vogels 2011).
+STDP currently treats E and I slots identically. Anti-Hebbian
+STDP on inhibitory synapses is the natural follow-up once closed-
+loop adrenaline (Step 10) lands.

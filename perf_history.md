@@ -634,3 +634,61 @@ With the encoding problem solved at this scale, the next interesting questions a
 4. **Social-intelligence tasks beyond signal-following.** The "awareness + prediction" target from earlier framing invites tasks where both agents are evolved and have to coordinate, not the asymmetric signal-follower setup.
 
 Step 8 completes the N=256 re-scale plan's research arc: we can now solve the step-7 task at the scale we wanted to operate at, with a GA that actually does useful work. That's the infrastructure milestone the project has been aiming for since steps 5 and 7 first plateaued.
+
+---
+
+## 2026-04-22 — Step 9: inhibition substrate adopted, validated at canonical values
+
+- **Module additions:** `slotpool.synaptic_current` gained optional `pre_is_inhibitory` and `i_weight_multiplier` parameters; `slotpool.assign_ei_identity` helper added. `paired.step_paired` and `paired.simulate_paired` thread `a_is_inhibitory` / `b_is_inhibitory` / `i_weight_multiplier`. All additions default to the pre-step-9 behavior (no E/I), so every prior experiment reproduces byte-exactly.
+- **Decision log:** D007 logs the adoption of canonical E/I values (ratio 4:1, multiplier 4.0) as provisional.
+- **Experiment:** `experiments/step09_handwired_n256_ei.py` runs a hand-wired control at the step-7c parameters (N=256, K=32, tonic=16, v_max=2.0) comparing E/I-substrate variants against the no-E/I baseline.
+
+### Results
+
+| config | fitness | B rates by segment (Hz) |
+|---|---:|---|
+| cross-random v=2.0, no E/I (step 7c baseline) | −1.737e−4 | 28, 28, 32, 30 |
+| **cross-random v=2.0, E/I ON (canonical balanced)** | **−5.204e−4** | **18, 18, 18, 18** |
+| cross-E-only v=2.0, E/I ON | **−1.564e−4** | 28, 29, 32, 31 |
+| cross-I-only v=2.0, E/I ON | −1.637e−3 | 0, 0, 0, 0 |
+| cross-E-only v=1.0, E/I ON | −3.163e−4 | 24, 23, 24, 25 |
+| cross-E-only v=0.5, E/I ON | −3.752e−4 | 20, 22, 22, 22 |
+
+A's per-segment firing rates: [28, 44, 32, 50] Hz.
+
+### Validation — substrate behaves as predicted
+
+- **Canonical balanced cross produces near-tonic-only firing** (row 2: 18 Hz flat across segments). Theoretical expectation: `0.8 × v − 0.2 × v × 4 = 0` mean, so B's firing is driven by tonic only and fluctuations don't push past it meaningfully at these parameters. Observed exactly that.
+- **Pure inhibitory cross produces silence** (row 4: 0 Hz). Theoretical: `0 × E − 1.0 × v × 4 = −8 mV` mean cross input overwhelms the 16 mV tonic, V_eq = −65 + 16 − 8 = −57 mV, below threshold. Observed: zero firing.
+- **Pure excitatory cross preserves step 7c behavior** (row 3). Same regime as pre-E/I; fitness essentially matches baseline.
+- **Intermediate E-only weights** (rows 5, 6) show graded reduction in B's firing rate as cross-input shrinks. Monotonic as expected.
+
+### One interesting finding worth naming
+
+**Cross-E-only v=2.0 with E/I ON is marginally BETTER than the no-E/I baseline** (−1.564e−4 vs. −1.737e−4). Modest improvement (~10%), likely due to A's own internal E/I balance sharpening A's spike timing — A's dynamics are slightly crisper with inhibition, and B inherits the sharper signal. Not a large effect; within the range where a different seed could erase it.
+
+### Architectural observation: balanced cross ≠ useful cross
+
+The theory predicts "balanced E/I = zero mean" and that's exactly what Step 9 shows. Biologically this is the *local* balance of cortical circuits — neighboring pyramidal-interneuron pairs. But for *long-range feedforward* connections (our B-observes-A setup), cortex uses E-biased projections, not balanced ones. The feedforward axons from one cortical area to another are predominantly excitatory onto the target area's excitatory cells; the balance comes from local inhibition *within* the target area, not from balanced feedforward.
+
+Step 9 reproduces this: the useful configuration for signal-following is E-targeted cross (row 3), not balanced cross (row 2). This is the correct architecture even with canonical E/I values; it's not a failure of the substrate, it's the substrate pointing us at the right connectivity pattern.
+
+### What Step 9 validates, and what remains for Step 10+
+
+**Validates:**
+
+- E/I substrate implementation is correct (theory and observation agree on all six configurations).
+- Default values (ratio 4:1, multiplier 4.0) produce the predicted dynamic regimes.
+- No regressions in existing experiments (63 tests pass, 100 % branch coverage across 8 library modules).
+- The substrate is opt-in; every step 2–8 experiment reproduces byte-exactly when E/I is not explicitly engaged.
+
+**Does NOT validate (these are Step 10 / 11 work):**
+
+- Whether the canonical values are optimal for silicritter's architecture (D007 punch list).
+- Whether E/I substrate interacts usefully with closed-loop adrenaline (Step 10).
+- Whether inhibitory plasticity (Vogels 2011 iSTDP) is needed to prevent I-weight drift.
+- Whether the slight fitness improvement at cross-E-only v=2.0 with E/I is a real effect or noise; needs multi-seed confirmation.
+
+### Phase 10 ready
+
+The substrate is stable. Step 10 can now layer closed-loop adrenaline on top of the E/I substrate and test whether dynamic gain modulation does useful work where static balance alone cannot — e.g., pushing past the 30-Hz ceiling on demand when A's rate demands it.

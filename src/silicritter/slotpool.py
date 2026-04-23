@@ -132,30 +132,78 @@ def init_random(
     )
 
 
-def synaptic_current(pool: SlotPool, spikes: jax.Array) -> jax.Array:
+def synaptic_current(
+    pool: SlotPool,
+    spikes: jax.Array,
+    pre_is_inhibitory: jax.Array | None = None,
+    i_weight_multiplier: float = 4.0,
+) -> jax.Array:
     """Compute per-postsynaptic synaptic input from presynaptic spikes.
 
     For each post-neuron, each active slot bound to a pre-neuron that
     fired this step contributes its v to the synaptic current.
 
+    When `pre_is_inhibitory` is provided, slot contributions sourced
+    from inhibitory pre-neurons are negated and scaled by
+    `i_weight_multiplier` to reflect the stronger per-synapse effect
+    of the smaller inhibitory population (canonical cortical balance:
+    E:I ratio ~4:1, I-weight ~4x E-weight). The default value 4.0 is
+    from the cortical balanced-network literature; callers should
+    override per experiment when perturbation-testing the balance.
+
     Contract: `spikes.shape[0]` must exceed every index in `pool.pre_ids`.
-    JAX out-of-bounds gather-indexing clamps silently rather than raising,
-    so a mismatch between the pool's pre-index range and `spikes.shape[0]`
-    produces wrong results rather than an error. Callers are responsible
-    for keeping these aligned; `init_random(n_post, n_pre, ...)` guarantees
-    it when the spike vector is sized to `n_pre`.
+    When provided, `pre_is_inhibitory.shape[0]` must equal
+    `spikes.shape[0]`. JAX out-of-bounds gather-indexing clamps
+    silently rather than raising.
 
     Args:
         pool: SlotPool with arrays of shape (N_post, K).
         spikes: presynaptic spikes, shape (N_pre,), boolean.
+        pre_is_inhibitory: optional bool array (N_pre,) marking
+            inhibitory pre-neurons. When None, every pre is excitatory
+            (backward-compatible with step 2-8 behavior).
+        i_weight_multiplier: per-synapse scaling applied to
+            inhibitory-sourced contributions (in addition to sign
+            flip). Default 4.0 matches canonical cortical balance.
 
     Returns:
         Per-post synaptic current, shape (N_post,), float32.
     """
     spike_gathered = spikes[pool.pre_ids]
     contrib = pool.v * spike_gathered.astype(jnp.float32)
+    if pre_is_inhibitory is not None:
+        is_inh_gathered = pre_is_inhibitory[pool.pre_ids]
+        sign_scale = jnp.where(
+            is_inh_gathered,
+            jnp.float32(-i_weight_multiplier),
+            jnp.float32(1.0),
+        )
+        contrib = contrib * sign_scale
     contrib = jnp.where(pool.active, contrib, jnp.float32(0.0))
     return contrib.sum(axis=1)
+
+
+def assign_ei_identity(
+    n_neurons: int,
+    inhibitory_fraction: float = 0.2,
+) -> jax.Array:
+    """Return a (n_neurons,) bool array marking inhibitory neurons True.
+
+    Default 20% inhibitory (canonical cortical E:I ~4:1). Inhibitory
+    neurons are the LAST `inhibitory_fraction * n_neurons` indices --
+    deterministic so paired-agent cross-raster construction is
+    well-defined. A randomized variant may be added later.
+
+    Args:
+        n_neurons: total population size.
+        inhibitory_fraction: fraction of population marked inhibitory.
+            Default 0.2.
+
+    Returns:
+        Boolean array (n_neurons,); True at indices of I-neurons.
+    """
+    n_inhibitory = int(n_neurons * inhibitory_fraction)
+    return jnp.arange(n_neurons) >= (n_neurons - n_inhibitory)
 
 
 def effective_weights(pool: SlotPool, n_pre: int) -> jax.Array:

@@ -205,6 +205,102 @@ def test_paired_agents_independent_with_zero_cross_weights() -> None:
     assert int(spikes_b.sum()) == 0
 
 
+def test_step_paired_ei_substrate_changes_synaptic_current() -> None:
+    """Providing E/I substrate negates+scales I-sourced contributions.
+
+    Two identical runs differing only in whether `a_is_inhibitory` /
+    `b_is_inhibitory` are provided; B receives synaptic current from
+    A's spikes, and with partner A having an I-neuron that fires, the
+    E/I run must produce a visibly different B membrane potential than
+    the no-E/I run.
+    """
+    n = 4
+    k = 2
+    state = init_paired_state(n, k, jax.random.PRNGKey(100))
+    # Force A's neurons [2, 3] to fire (I-neurons under the fraction
+    # convention: last 50% at this small n).
+    spikes_a_forced = jnp.array([False, False, True, True], dtype=jnp.bool_)
+    state = PairedState(
+        a=state.a._replace(lif=state.a.lif._replace(spikes=spikes_a_forced)),
+        b=state.b,
+    )
+    # Make B's slots all bind to A-side (indices n..2n) so the A-spike
+    # signal clearly drives B's synaptic input.
+    n_pre = 2 * n
+    cross_pre_ids = jnp.full((n, k), n, dtype=jnp.int32)
+    _ = n_pre  # suppress lint
+    pool_b_cross = SlotPool(
+        pre_ids=cross_pre_ids,
+        v=jnp.full((n, k), 0.3, dtype=jnp.float32),
+        plasticity_rate=jnp.ones((n, k), dtype=jnp.float32),
+        active=jnp.ones((n, k), dtype=jnp.bool_),
+        release_counter=jnp.zeros((n, k), dtype=jnp.int32),
+    )
+    state = PairedState(
+        a=state.a,
+        b=state.b._replace(pool=pool_b_cross),
+    )
+
+    stdp_params = default_params()
+    zero_vec = jnp.zeros((n,), dtype=jnp.float32)
+    # Reference run: no E/I.
+    nxt_no_ei = step_paired(
+        state,
+        i_ext_a=zero_vec, i_ext_b=zero_vec,
+        valence_a=jnp.float32(0.0), valence_b=jnp.float32(0.0),
+        adrenaline_a=jnp.float32(1.0), adrenaline_b=jnp.float32(1.0),
+        stdp_params=stdp_params,
+    )
+    # E/I run: A has last 50% inhibitory (so all firing A-neurons
+    # are I), B is all-excitatory.
+    a_is_inh = jnp.array([False, False, True, True], dtype=jnp.bool_)
+    b_is_inh = jnp.zeros((n,), dtype=jnp.bool_)
+    nxt_with_ei = step_paired(
+        state,
+        i_ext_a=zero_vec, i_ext_b=zero_vec,
+        valence_a=jnp.float32(0.0), valence_b=jnp.float32(0.0),
+        adrenaline_a=jnp.float32(1.0), adrenaline_b=jnp.float32(1.0),
+        stdp_params=stdp_params,
+        a_is_inhibitory=a_is_inh,
+        b_is_inhibitory=b_is_inh,
+        i_weight_multiplier=4.0,
+    )
+    # No-EI run: B's neuron 0 receives positive synaptic current
+    # (A neurons 2,3 firing, K=2 slots bound to pre=n (A neuron 0,
+    # not firing), wait -- let me re-check. Slots bind to pre=n,
+    # which is A-neuron 0. A-neuron 0 is NOT firing (only 2,3 are).
+    # So I need slots bound to firing A-neurons.
+    # Rebinding: bind to pre=n+2 (A-neuron 2, which IS firing).
+    cross_pre_ids_firing = jnp.full((n, k), n + 2, dtype=jnp.int32)
+    pool_b_firing = pool_b_cross._replace(pre_ids=cross_pre_ids_firing)
+    state_firing = PairedState(
+        a=state.a,
+        b=state.b._replace(pool=pool_b_firing),
+    )
+    nxt_no_ei = step_paired(
+        state_firing,
+        i_ext_a=zero_vec, i_ext_b=zero_vec,
+        valence_a=jnp.float32(0.0), valence_b=jnp.float32(0.0),
+        adrenaline_a=jnp.float32(1.0), adrenaline_b=jnp.float32(1.0),
+        stdp_params=stdp_params,
+    )
+    nxt_with_ei = step_paired(
+        state_firing,
+        i_ext_a=zero_vec, i_ext_b=zero_vec,
+        valence_a=jnp.float32(0.0), valence_b=jnp.float32(0.0),
+        adrenaline_a=jnp.float32(1.0), adrenaline_b=jnp.float32(1.0),
+        stdp_params=stdp_params,
+        a_is_inhibitory=a_is_inh,
+        b_is_inhibitory=b_is_inh,
+        i_weight_multiplier=4.0,
+    )
+    # A-neuron 2 (the pre for every B slot) is inhibitory, so with
+    # E/I enabled, B's synaptic input flips sign and scales by 4x.
+    # V after one step: no-E/I gets positive dV, E/I gets negative
+    # (V goes further below rest, or less above).
+    assert float(nxt_no_ei.b.lif.v[0]) > float(nxt_with_ei.b.lif.v[0])
+
+
 def test_step_paired_compatible_with_structural_release() -> None:
     """Structural release applies per agent when structural_params set."""
     n = 4
