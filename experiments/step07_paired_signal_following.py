@@ -90,6 +90,12 @@ PRE_RESAMPLE_PROB: float = 0.03
 # crowding the zero-v corner.
 V_INIT_SCALE: float = 0.05
 
+# B's valence trace magnitude. 1.0 (default) runs STDP on B during
+# each critter's lifetime. 0.0 freezes B's weights during eval, which
+# is the Phase 4.1 control for isolating direct-encoding capability
+# from Baldwin interference.
+VALENCE_B_CONSTANT: float = 1.0
+
 # Agent A's piecewise drive: four segments at different mV levels,
 # producing four distinct firing regimes B has to anticipate.
 A_DRIVE_PROFILE: tuple[float, ...] = (18.0, 22.0, 19.0, 24.0)
@@ -130,7 +136,9 @@ def _build_scenario() -> Scenario:
         dtype=jnp.float32,
     )
     valence_a_trace = jnp.zeros((N_TIMESTEPS,), dtype=jnp.float32)
-    valence_b_trace = jnp.ones((N_TIMESTEPS,), dtype=jnp.float32)
+    valence_b_trace = jnp.full(
+        (N_TIMESTEPS,), VALENCE_B_CONSTANT, dtype=jnp.float32
+    )
     adrenaline_trace = jnp.ones((N_TIMESTEPS,), dtype=jnp.float32)
     # A's pool is the same fixed random scaffold for every critter in
     # the population; we pass it in as part of the scenario so the
@@ -319,6 +327,14 @@ def _apply_weight_overrides(
         V_SIGMA = v_sigma
 
 
+def _apply_task_overrides(valence_b: float | None) -> None:
+    """Apply optional valence-B-constant override."""
+    # pylint: disable=global-statement
+    global VALENCE_B_CONSTANT
+    if valence_b is not None:
+        VALENCE_B_CONSTANT = valence_b
+
+
 def run(
     seed: int = 0,
     n_neurons: int | None = None,
@@ -327,10 +343,12 @@ def run(
     v_max: float | None = None,
     v_init_scale: float | None = None,
     v_sigma: float | None = None,
+    valence_b: float | None = None,
 ) -> None:
     """Execute the paired-agent GA and report results."""
     _apply_scale_overrides(n_neurons, slots_per_post, n_timesteps)
     _apply_weight_overrides(v_max, v_init_scale, v_sigma)
+    _apply_task_overrides(valence_b)
     scenario = _build_scenario()
     n_pre_b = 2 * N_NEURONS
 
@@ -406,6 +424,7 @@ if __name__ == "__main__":
     parser.add_argument("--v-max", type=float, default=None)
     parser.add_argument("--v-init-scale", type=float, default=None)
     parser.add_argument("--v-sigma", type=float, default=None)
+    parser.add_argument("--valence-b", type=float, default=None)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     run(
@@ -416,4 +435,5 @@ if __name__ == "__main__":
         v_max=args.v_max,
         v_init_scale=args.v_init_scale,
         v_sigma=args.v_sigma,
+        valence_b=args.valence_b,
     )

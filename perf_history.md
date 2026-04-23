@@ -510,3 +510,54 @@ Three ways to close the Baldwin gap:
 ### Phase 4 conclusion
 
 Phase 4's operational outcome: the step-7 plateau (−5.18e−4) and the Phase 4 plateau (−4.17e−4) are both well above the hand-wired optimum (−1.74e−4). The gap is dominated by Baldwin interference between the GA outer loop and STDP inner loop, not by direct-encoding weakness per se. Proceeding to a Phase 4.1 control run with plasticity disabled is the natural next step — ~30 s to run, definitive on whether direct encoding itself can reach the hand-wired optimum.
+
+---
+
+## 2026-04-22 — Phase 4.1 (N=256 re-scale): plasticity-off control *inverts the Phase 4 diagnosis*
+
+- **Script:** `experiments/step07_paired_signal_following.py` with `--valence-b=0.0`
+- **Parameters:** identical to Phase 4's scaled-exploration run (N = 256, K = 32, v_max = 2.0, v_init_scale = 0.5, v_sigma = 0.1, pop = 32, gens = 30), except `valence_b_trace = 0` so STDP is inactive on B during every critter's lifetime. Initial pool configuration fully determines behaviour; no Baldwin interference possible.
+- **Prediction (Phase 4 entry):** if Baldwin is the bottleneck, this run should improve meaningfully toward the hand-wired optimum of −1.74e−4.
+
+### Result: Phase 4.1 is indistinguishable from Phase 4
+
+| condition | fitness |
+|---|---:|
+| Phase 4 scaled, plasticity ON | −4.169e−4 |
+| **Phase 4.1 scaled, plasticity OFF** | **−4.179e−4** |
+
+Difference is 0.3 % — well inside the noise floor. **Baldwin interference contributes essentially nothing to the gap.** The GA plateau at N = 256 with v_max = 2.0 is the same with or without STDP running during evaluation.
+
+### The Phase 4 diagnosis was wrong
+
+The Phase 4 entry above called Baldwin interference "dominant." That diagnosis is now falsified. The actual bottleneck is **direct-encoding weakness in a combinatorially structured optimum**.
+
+Back-of-envelope for why:
+
+- Hand-wired Phase 3 winner has *all* K = 32 slots per B-neuron bound to A (pre_id ∈ [N, 2N)) with v ≈ 2.0. This is a highly structured configuration.
+- GA random init has pre_id drawn uniformly from [0, 2N), so ~50 % of slots are cross-bound, ~50 % recurrent-bound. Getting to "all cross" requires resampling ~4000 pre_ids to the right half of the index range.
+- `pre_resample_prob = 0.03` means ~3 % of slots get their pre_id redrawn per generation, and half of those land in the wrong range by chance.
+- Over 30 generations, ~45 % of slots get any resampling; even fewer land cross by chance alone.
+- The GA is searching for a specific large-scale structural pattern with mutations that are far too local.
+
+Equivalently stated: the fitness landscape around the hand-wired optimum is probably smooth (all-cross + high-v is a broad basin) but the GA's initial population is hundreds of independent coin flips away from that basin.
+
+### What this means for the project roadmap
+
+The earlier "indirect encoding is overdue" noted in step 5.5 and step 7.5 now has a concrete empirical justification rather than a theoretical one:
+
+- **Direct-encoding GA cannot reach the architectural ceiling at N = 256**, regardless of plasticity setting.
+- **The hand-wired ceiling exists** — Phase 3 showed it — so the architecture is solvable in principle.
+- **The gap is encoding-space size versus search pressure**, not plasticity interference and not a GA hyperparameter tuning issue.
+
+Three real next directions, in order of promise:
+
+1. **Indirect encoding (CPPN-style).** A small generator network (10–100 evolved parameters) produces the full (N × K) pool from a compact rule. "Bind all slots to A with v near v_max" is a two-line CPPN. Dropping from 8192 direct parameters to ~50 meta-parameters shrinks the search space by ~160× and moves the hand-wired-equivalent configurations into reach of a 30-generation GA.
+2. **Structural mutation operators.** Instead of per-slot random resampling, add mutation operators that flip *ranges* of slots to all-cross or all-recurrent in one step. Keeps direct encoding but biases exploration toward the kind of structured configurations hand-wiring found. Cheaper than rewriting the encoding; may not buy enough.
+3. **Task redesign.** If the achievable ceiling at N = 256 is near −1.74e−4 and a GA at this scale can't realistically reach it, maybe the signal-following task is too narrow a fitness surface for this architecture. A richer task (multiple correlated signals, or signals plus a reward channel) might give the GA more gradient to follow.
+
+### Phase 4.1 conclusion
+
+Baldwin interference was a plausible diagnosis; Phase 4.1 ruled it out definitively. The actual bottleneck is combinatorial encoding weakness. The ~30 seconds of compute it took to run Phase 4.1 saved us from pursuing plasticity-vs-GA solutions that wouldn't have helped.
+
+**Recommended next concrete step: implement CPPN indirect encoding** (or an equivalent compact generator) in `ga.py`, wire it through step 7's GA, and re-run at the same N = 256 parameters. Expected outcome under the corrected diagnosis: fitness should drop meaningfully toward the hand-wired −1.74e−4 and potentially below it, because a generator can produce configurations that the random-slot direct encoding structurally can't reach in 30 generations.
