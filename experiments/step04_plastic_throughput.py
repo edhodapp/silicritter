@@ -140,4 +140,17 @@ def run(
 
 
 if __name__ == "__main__":
-    run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--n-neurons", type=int, default=1024)
+    parser.add_argument("--slots-per-post", type=int, default=64)
+    parser.add_argument("--n-timesteps", type=int, default=10_000)
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
+    run(
+        n_neurons=args.n_neurons,
+        slots_per_post=args.slots_per_post,
+        n_timesteps=args.n_timesteps,
+        seed=args.seed,
+    )

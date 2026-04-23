@@ -124,8 +124,26 @@ def _format_trajectory(label: str, counts: list[int]) -> str:
     return header + "\n" + prefix + " per-chunk active/10: " + bars
 
 
-def run(seed: int = 0) -> None:
+def _apply_scale_overrides(
+    n_neurons: int | None,
+    slots_per_post: int | None,
+) -> None:
+    """Apply optional N / K overrides to the module-level constants."""
+    # pylint: disable=global-statement
+    global N_NEURONS, K_SLOTS
+    if n_neurons is not None:
+        N_NEURONS = n_neurons
+    if slots_per_post is not None:
+        K_SLOTS = slots_per_post
+
+
+def run(
+    seed: int = 0,
+    n_neurons: int | None = None,
+    slots_per_post: int | None = None,
+) -> None:
     """Run LTP- and LTD-biased trajectories; print comparison."""
+    _apply_scale_overrides(n_neurons, slots_per_post)
     print(f"device: {jax.default_backend()} / {jax.devices()[0]}")
     print(
         f"N={N_NEURONS}, K={K_SLOTS}, "
@@ -165,4 +183,15 @@ def run(seed: int = 0) -> None:
 
 
 if __name__ == "__main__":
-    run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--n-neurons", type=int, default=None)
+    parser.add_argument("--slots-per-post", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
+    run(
+        seed=args.seed,
+        n_neurons=args.n_neurons,
+        slots_per_post=args.slots_per_post,
+    )

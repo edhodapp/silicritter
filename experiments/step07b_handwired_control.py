@@ -194,8 +194,30 @@ def _evaluate(
     return fitness, a_rate_hz, b_rate_hz
 
 
-def run(seed: int = 0) -> None:
+def _apply_scale_overrides(
+    n_neurons: int | None,
+    slots_per_post: int | None,
+    n_timesteps: int | None,
+) -> None:
+    """Apply optional N / K / T overrides to the module-level constants."""
+    # pylint: disable=global-statement
+    global N_NEURONS, K_SLOTS, N_TIMESTEPS
+    if n_neurons is not None:
+        N_NEURONS = n_neurons
+    if slots_per_post is not None:
+        K_SLOTS = slots_per_post
+    if n_timesteps is not None:
+        N_TIMESTEPS = n_timesteps
+
+
+def run(
+    seed: int = 0,
+    n_neurons: int | None = None,
+    slots_per_post: int | None = None,
+    n_timesteps: int | None = None,
+) -> None:
     """Run each hand-wired control, print fitnesses, compare to GA plateau."""
+    _apply_scale_overrides(n_neurons, slots_per_post, n_timesteps)
     scenario = _build_scenario()
     ga_plateau = -5.18e-4  # from step 7 perf_history
 
@@ -297,4 +319,17 @@ def run(seed: int = 0) -> None:
 
 
 if __name__ == "__main__":
-    run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--n-neurons", type=int, default=None)
+    parser.add_argument("--slots-per-post", type=int, default=None)
+    parser.add_argument("--n-timesteps", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
+    run(
+        seed=args.seed,
+        n_neurons=args.n_neurons,
+        slots_per_post=args.slots_per_post,
+        n_timesteps=args.n_timesteps,
+    )
