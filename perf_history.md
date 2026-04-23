@@ -561,3 +561,76 @@ Three real next directions, in order of promise:
 Baldwin interference was a plausible diagnosis; Phase 4.1 ruled it out definitively. The actual bottleneck is combinatorial encoding weakness. The ~30 seconds of compute it took to run Phase 4.1 saved us from pursuing plasticity-vs-GA solutions that wouldn't have helped.
 
 **Recommended next concrete step: implement CPPN indirect encoding** (or an equivalent compact generator) in `ga.py`, wire it through step 7's GA, and re-run at the same N = 256 parameters. Expected outcome under the corrected diagnosis: fitness should drop meaningfully toward the hand-wired −1.74e−4 and potentially below it, because a generator can produce configurations that the random-slot direct encoding structurally can't reach in 30 generations.
+
+---
+
+## 2026-04-22 — Step 8: CPPN indirect encoding closes the gap to the hand-wired optimum
+
+- **New module:** `src/silicritter/cppn.py` — Compositional Pattern Producing Network indirect encoding. 2-layer MLP CPPN with tanh hidden activations and sigmoid output heads. Inputs: `(post_idx_normalized, slot_idx_normalized, bias)`. Outputs: `(pre_id_raw, v_raw, plasticity_rate_raw)` decoded into a full SlotPool.
+- **New tests:** `tests/test_cppn.py` — 10 behavioural tests including a hand-crafted genome test showing the CPPN can express the all-cross / high-v pattern.
+- **New experiment:** `experiments/step07e_paired_cppn_n256.py` — same scenario as Phase 4 (N = 256, K = 32, v_max = 2.0, tonic = 16 mV, T = 2000, pop = 32, gens = 30, plasticity ON) with the CPPN encoder replacing the direct encoding.
+- **Genome size:** 51 weights (3 × 8 + 9 × 3) at hidden_dim = 8. Compare to direct encoding's 24,576 parameters. **~480× smaller search space.**
+
+### Result
+
+| encoding | fitness |
+|---|---:|
+| step 7 original (N=32, direct) | −5.18e−4 |
+| Phase 4 scaled direct (N=256) | −4.17e−4 |
+| Phase 3 hand-wired (plasticity off) | −1.74e−4 |
+| **step 8 CPPN (N=256, plasticity on)** | **−1.704e−4** |
+
+The CPPN GA fitness **matches and slightly beats** the hand-wired baseline. Convergence happened by generation 14; plateau from there. Per-generation eval ~620 ms on the MX150 (same as direct encoding since the sim cost dominates over encoding cost).
+
+### The decoded best-genome pool
+
+```
+100.0% cross-bound (8192/8192 slots bound to A-side indices)
+v mean 1.999, v max 2.000
+```
+
+**The CPPN discovered the exact hand-wired-optimal configuration.** All 8192 slots bind to A (the right half of the pre-raster); v saturates at v_max. The small improvement over the static hand-wired result (plasticity off) reflects a small contribution from lifetime STDP fine-tuning on top of the hand-wired structure.
+
+### Per-window behaviour of the best CPPN
+
+B's per-window firing rate shows clear tracking of A, with the same systematic under-response to A's peaks that the hand-wired baseline had:
+
+- A = 20 Hz → B = 20 Hz (match)
+- A = 30 Hz → B = 30 Hz (match)
+- A = 40 Hz → B = 30 Hz (undershoot)
+- A = 50 Hz → B = 30 Hz (undershoot)
+
+The ceiling at ~30 Hz is an architectural property of the tonic-plus-cross dynamics at K = 32, v_max = 2.0 — not an encoding failure. A GA that learned to compensate (e.g., by binding *multiple* slots to the same A-neuron to linearly amplify) might push past 30 Hz, but the current 2-layer CPPN doesn't find that pattern in 30 generations.
+
+### What this validates, empirically
+
+1. **Phase 4.1's diagnosis was correct.** "The actual bottleneck is combinatorial encoding weakness" is now an empirical claim, not a theoretical one. Replacing the encoding with a compact generator closed the entire 2.4× gap between direct-encoding plateau and hand-wired optimum.
+2. **The search space argument holds.** 51 evolved parameters beat 24,576 evolved parameters in 30 generations, on the exact same task, with the exact same sim and same GA machinery.
+3. **The CPPN's expressivity is sufficient** at this task's complexity. 8 hidden units + 3 output heads is enough to find "bind all slots to A with high v." Richer tasks (multi-signal prediction, differentiated neural populations) may need more hidden units or HyperNEAT-style activation-function diversity.
+
+### What this does NOT validate
+
+- **The 30-Hz ceiling is real.** Even the optimal configuration undershoots A's peaks. To push past 30 Hz we'd need a different architectural knob — e.g., dynamic cross-weight amplification through plasticity (which our setup allows but didn't converge to), or a richer task that rewards A-peak-tracking directly.
+- **CPPN is not magic.** It solved *this* task because the architectural optimum has a simple regular structure ("bind every slot the same way"). Tasks whose optima require spatially-differentiated patterns may hit different limits.
+- **We didn't evolve topology.** Full HyperNEAT evolves the CPPN's topology as well as weights. We fixed the topology at 3-8-3. Adding topology evolution is the next step if this encoding plateaus on richer tasks.
+
+### Phase 4-era conclusions are now coherent
+
+Reading across the N=256 phase sequence:
+
+- Phase 2 confirmed nothing breaks at N=256.
+- Phase 3 showed architectural leverage exists at tonic=16, K=32, v_max=2.0.
+- Phase 4 showed direct-encoding GA plateaus at −4.17e−4, well short of the hand-wired baseline.
+- Phase 4.1 (plasticity-off control) falsified the Baldwin-interference diagnosis.
+- **Step 8 (CPPN)** closes the gap. Encoding size was the bottleneck all along.
+
+### Phase 5 / step 9 candidate directions
+
+With the encoding problem solved at this scale, the next interesting questions are:
+
+1. **Different tasks.** The signal-following task's architectural ceiling is ~30 Hz. Tasks that exercise the network's capacity differently (e.g., phase-locked oscillation, sequence memory, two-agent coordination where B influences A back) might reveal different limits and different encoding needs.
+2. **Richer CPPNs.** Mixed activation functions (sin, gaussian, linear), topology evolution (NEAT-style), or multi-layer CPPNs could reach patterns that a tanh-only 2-layer net can't.
+3. **Slot acquisition (deferred from step 6).** Now that we have working GA+CPPN infrastructure, layering in structural acquisition gives us developmental dynamics.
+4. **Social-intelligence tasks beyond signal-following.** The "awareness + prediction" target from earlier framing invites tasks where both agents are evolved and have to coordinate, not the asymmetric signal-follower setup.
+
+Step 8 completes the N=256 re-scale plan's research arc: we can now solve the step-7 task at the scale we wanted to operate at, with a GA that actually does useful work. That's the infrastructure milestone the project has been aiming for since steps 5 and 7 first plateaued.
