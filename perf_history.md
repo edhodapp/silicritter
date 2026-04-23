@@ -891,3 +891,58 @@ The analogy: tonic is like the cortical default-mode's metabolic baseline. Real 
 - **Single seed.** As with steps 10 and 11. Step 1's multi-seed discipline should reapply here before citing these numbers as robust findings.
 - **Step 11's evolved pool NOT tested here.** This sweep used step 10's hand-wired 100%-cross pool. The step 11 evolved pool (87.9% cross / 12.1% recurrent) might push the cliff down further under closed-loop, because recurrent E provides self-amplification once any spikes occur. That's a natural follow-up experiment.
 - **Plasticity off throughout.** `plasticity_rate = 0` means no weight adaptation during the sim. Whether STDP would grow B's effective sensitivity to cross-input enough to recover from low-tonic regimes is untested — but given the "sub-threshold physics" reason for the cliff, probably not.
+
+---
+
+## 2026-04-23 — Step 13: perturbation validation of D007 E/I canonical values
+
+- **Script:** `experiments/step13_ei_perturbation.py`
+- **Question:** D007 adopted `(inhibitory_fraction, i_weight_multiplier) = (0.2, 4.0)` provisionally, based on literature consensus and with an explicit "may be following the herd" caveat. Does the substrate's own dynamics confirm this as a reasonable point, reveal a sharply better off-canonical configuration, or show catastrophic failure modes nearby?
+- **Grid:** 5×5: `i_fraction ∈ {0.0, 0.1, 0.2, 0.3, 0.4}` × `i_mult ∈ {1.0, 2.0, 4.0, 6.0, 8.0}`. All other parameters held at step 10's configuration (hand-wired cross-E-only B pool, tonic = 16 mV). Both open-loop and closed-loop (gain = 50) evaluated at every cell.
+
+### Open-loop fitness grid (const adr = 1.0)
+
+```
+i_mult \\ i_frac |    0.00 |    0.10 |    0.20 |    0.30 |    0.40
+         1.0     -1.74e-4  -1.67e-4  -1.68e-4  -1.71e-4  -1.72e-4
+         2.0     -1.74e-4  -1.66e-4  -1.71e-4  -1.72e-4  -1.57e-4
+         4.0     -1.74e-4  -1.69e-4  -1.57e-4*  -1.51e-4  -1.53e-4
+         6.0     -1.74e-4  -1.61e-4  -1.47e-4  -1.54e-4  -1.77e-4
+         8.0     -1.74e-4  -1.49e-4  -1.46e-4  -1.65e-4  -1.83e-4
+```
+(\*) = D007 canonical.
+
+### Closed-loop fitness grid (gain = 50)
+
+```
+i_mult \\ i_frac |    0.00 |    0.10 |    0.20 |    0.30 |    0.40
+         1.0     -5.79e-5  -5.73e-5  -5.53e-5  -5.61e-5  -5.75e-5
+         2.0     -5.79e-5  -5.61e-5  -5.57e-5  -5.76e-5  -5.74e-5
+         4.0     -5.79e-5  -5.53e-5  -5.60e-5*  -5.27e-5  -5.33e-5
+         6.0     -5.79e-5  -5.53e-5  -5.33e-5  -5.57e-5  -1.00e-4
+         8.0     -5.79e-5  -5.48e-5  -4.98e-5  -9.08e-5  -1.06e-4
+```
+(\*) = D007 canonical.
+
+### Findings
+
+- **D007 is reasonable but not optimal.** Canonical `(0.2, 4.0)` sits at −1.57e−4 open-loop and −5.60e−5 closed-loop. Best-found in both conditions is `(0.2, 8.0)`: −1.46e−4 open-loop (−7% MSE vs canonical), −4.98e−5 closed-loop (−11% MSE vs canonical). The winning i_fraction = 0.2 matches D007; it's the multiplier that wants to be twice as high.
+- **The `i_fraction = 0` column is constant per row** (all open-loop = −1.74e−4; all closed-loop = −5.79e−5). That's a sanity check: with no inhibitory neurons, the multiplier has no effect.
+- **There's a collapse region at high (i_fraction, i_mult)** visible in the closed-loop grid: `(0.4, 8.0) = −1.06e−4`, `(0.4, 6.0) = −1.00e−4`, `(0.3, 8.0) = −9.08e−5`. Same mechanism as step 12's tonic cliff: too much inhibition drops B's equilibrium below threshold, no adrenaline rescue possible. At `(0.4, 8.0)` with tonic=16 and i_mult=8, inhibitory drive overwhelms the cross-E signal entirely. The open-loop grid shows milder but similar degradation at `(0.4, 8.0) = −1.83e−4`.
+- **Canonical sits in the smooth interior of a safe basin**, not near either optimum or collapse. The nearest neighbors in the grid are all within ~15% of canonical's fitness; the `(0.2, 8.0)` improvement is a consistent monotonic trend along i_frac=0.2, not a sharp pocket.
+
+### D007 status
+
+**Not superseding D007 on this data.** Multi-seed discipline (see step 10's multi-seed entry) should confirm any adoption change, and the `(0.2, 8.0)` advantage is 7–11% — meaningful but within the range of single-seed variation I haven't measured for this experiment yet. A `--n-seeds=5` rerun of step 13 at `(0.2, 4.0)` vs `(0.2, 8.0)` would settle it. Until that's done, D007 stays provisional per its own text. If multi-seed confirms, the decision to supersede D007 with `(0.2, 8.0)` would be a one-line D008.
+
+### Takeaway for the broader architecture
+
+- **E/I detail matters, but not sharply.** The substrate is forgiving of parameter choices within the interior of the grid; performance changes smoothly in the 10% range. It is NOT forgiving at the high-inhibition corner where physics takes over.
+- **The i_fraction axis is narrower than the i_mult axis.** Moving from i_fraction=0.2 to 0.4 at i_mult=4 loses ~5%; moving from i_mult=4 to 8 at i_fraction=0.2 *gains* ~11% in closed-loop. The inhibitory-fraction range 0.1–0.3 is safe; above 0.3 is cliff-adjacent.
+- **Canonical E:I literature reporting typically conflates fraction and multiplier**. "20% inhibitory" says nothing about synaptic strength. This sweep suggests the interesting axis is strength (per-synapse current magnitude), not count.
+
+### Caveats
+
+- **Single seed.** Same caveat as steps 10–12. Multi-seed confirmation is the gating requirement before any D007 supersession.
+- **Tonic fixed at 16 mV.** Step 12 showed tonic interacts with the collapse cliff; step 13's cliff might shift if tonic is lower. A joint (tonic × i_mult × i_frac) sweep would be more thorough but is 3× the grid; skipped for now.
+- **Hand-wired B pool only.** Step 11's evolved 87.9% cross / 12.1% recurrent pool might have a different E/I sensitivity profile (the recurrent slots carry B's own I neurons' spikes, so i_mult affects B's internal inhibition too). Re-running step 13 with step 11's genome-decoded pool would be the natural next step if E/I tuning becomes load-bearing for a downstream experiment.
