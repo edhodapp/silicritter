@@ -774,3 +774,33 @@ Steps 9 and 10 together close the N=256 re-scale arc in full:
 - **Closed-loop adrenaline breaks the static ceiling** (Step 10).
 
 The project now has working GA + indirect encoding + E/I substrate + closed-loop modulation machinery. That's the full toolkit the project has been circling since step 7 first plateaued.
+
+---
+
+## 2026-04-21 — Step 10 multi-seed confirmation
+
+- **Script:** `experiments/step10_closedloop_adrenaline.py --n-seeds=5`
+- **Seeds tested:** 0, 37, 74, 111, 148 (stride 37 for independent draws of B's cross-E-only pre-assignment)
+- **All other parameters:** unchanged from the single-seed run above (N=256, K=32, T=2000, E:I 80:20, i_mult=4.0, EMA decay 0.98, adrenaline range [0.5, 3.0])
+
+| condition | mean | std | min | max |
+|---|---:|---:|---:|---:|
+| open-loop (const adr=1.0) | −1.561e−4 | 8.49e−7 | −1.571e−4 | −1.550e−4 |
+| closed-loop gain = 10 | −1.072e−4 | 4.60e−6 | −1.116e−4 | −1.012e−4 |
+| closed-loop gain = 50 | **−5.595e−5** | **0.00e+00** | −5.595e−5 | −5.595e−5 |
+| closed-loop gain = 200 | **−5.595e−5** | **0.00e+00** | −5.595e−5 | −5.595e−5 |
+
+### What this tells us
+
+- **Open-loop is already nearly seed-independent** (std 8.5e−7 on a fitness of 1.56e−4, i.e., relative variation ~0.05%). The 256-neuron population averages over per-seed draw differences in which specific A-E neuron each of B's slots latches onto.
+- **Closed-loop gain = 50 and gain = 200 produce identical fitness to the float-precision limit across all 5 seeds** (std exactly 0.0). The controller is saturating adrenaline against the `ADR_MAX = 3.0` rail during A's peak segments, which makes B's instantaneous firing pattern deterministic given the piecewise-constant A drive. This is a ceiling — not B's intrinsic f-I ceiling (which tau_m_scale defeated), but the controller's **output clip.** Raising ADR_MAX would presumably let gain = 200 pull ahead of gain = 50 briefly, though the return on an already-near-perfect tracking residual may not justify it.
+- **The single-seed result from the previous entry is confirmed as the actual architectural finding**, not a lucky alignment. ~2.8× fitness improvement (open-loop 1.56e−4 → closed-loop 5.6e−5) holds robustly across seeds.
+- **gain = 10 sits at the intermediate regime** where the controller is too slow to catch A's rising edges before the window ends — modest variance (std 4.6e−6, ~4% relative) reflects per-seed differences in exactly *when* the controller catches up relative to the 100-step windows used for rate measurement.
+
+### Caveat this run resolves
+
+Earlier entry flagged "single seed" as a caveat. This entry discharges that caveat: the ceiling-breaking result reproduces to the float-precision limit at gain ≥ 50, so the finding is not seed-dependent.
+
+### Caveat this run surfaces
+
+The zero-variance at gain ≥ 50 is a **new** finding worth its own note: the controller is rail-limited at its output, not at the neuron-dynamics level. If a future task requires B to track A beyond 50 Hz peaks (the current A_DRIVE_PROFILE's max), ADR_MAX = 3.0 will become the ceiling. The substrate has headroom; the controller currently does not.

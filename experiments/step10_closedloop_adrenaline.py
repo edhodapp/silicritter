@@ -30,6 +30,7 @@ Usage:
 
 from __future__ import annotations
 
+import statistics
 from typing import NamedTuple
 
 import jax
@@ -284,8 +285,14 @@ def _a_rates_by_segment(spikes_a: jax.Array) -> list[float]:
     return [float(x) for x in a_seg]
 
 
-def run(seed: int = 0) -> None:
-    """Compare open-loop vs closed-loop adrenaline at several gain values."""
+SetupBundle = tuple[
+    PairedState, jax.Array, jax.Array,
+    jax.Array, jax.Array, jax.Array, jax.Array,
+]
+
+
+def _setup_for_seed(seed: int) -> SetupBundle:
+    """Build initial_state, E/I masks, and input traces for one seed."""
     pool_a = make_pool_for_partner(
         N_NEURONS, K_SLOTS, jax.random.PRNGKey(777)
     )
@@ -294,7 +301,41 @@ def run(seed: int = 0) -> None:
     a_is_inh = assign_ei_identity(N_NEURONS, INHIBITORY_FRACTION)
     b_is_inh = assign_ei_identity(N_NEURONS, INHIBITORY_FRACTION)
     i_ext_a, i_ext_b, valence, adrenaline_a = _build_traces()
+    return (
+        initial_state, a_is_inh, b_is_inh,
+        i_ext_a, i_ext_b, valence, adrenaline_a,
+    )
 
+
+OPEN_LOOP_LABEL = "open-loop (const adr=1.0)"
+
+
+def _evaluate_one_seed(
+    seed: int,
+) -> dict[str, float]:
+    """Run all four conditions for one seed; return {condition: fitness}."""
+    (initial_state, a_is_inh, b_is_inh,
+     i_ext_a, i_ext_b, valence, adrenaline_a) = _setup_for_seed(seed)
+
+    results: dict[str, float] = {}
+    spikes_a, spikes_b, _ = _run_open_loop(
+        initial_state, a_is_inh, b_is_inh,
+        i_ext_a, i_ext_b, valence, adrenaline_a,
+    )
+    results[OPEN_LOOP_LABEL] = _prediction_fitness(spikes_a, spikes_b)
+    for gain in (10.0, 50.0, 200.0):
+        spikes_a, spikes_b, _ = _run_closed_loop(
+            initial_state, a_is_inh, b_is_inh,
+            i_ext_a, i_ext_b, valence, adrenaline_a, gain,
+        )
+        results[f"closed-loop gain={gain:g}"] = _prediction_fitness(
+            spikes_a, spikes_b
+        )
+    return results
+
+
+def _print_scenario_header() -> None:
+    """Scenario parameters -- shared between single- and multi-seed paths."""
     print(f"device: {jax.default_backend()} / {jax.devices()[0]}")
     print(
         f"scenario: N={N_NEURONS}, K={K_SLOTS}, T={N_TIMESTEPS}, "
@@ -308,28 +349,75 @@ def run(seed: int = 0) -> None:
     )
     print()
 
-    # Baseline: constant adrenaline.
+
+def _run_single_seed_verbose(seed: int) -> None:
+    """Single-seed run with per-segment B rates (original step 10 output)."""
+    (initial_state, a_is_inh, b_is_inh,
+     i_ext_a, i_ext_b, valence, adrenaline_a) = _setup_for_seed(seed)
+
     spikes_a, spikes_b, adr = _run_open_loop(
         initial_state, a_is_inh, b_is_inh,
         i_ext_a, i_ext_b, valence, adrenaline_a,
     )
-    _summarize("open-loop (constant adr=1.0)", spikes_a, spikes_b, adr)
-
-    # Closed-loop at three gain values.
+    _summarize(OPEN_LOOP_LABEL, spikes_a, spikes_b, adr)
     for gain in (10.0, 50.0, 200.0):
         spikes_a, spikes_b, adr = _run_closed_loop(
             initial_state, a_is_inh, b_is_inh,
             i_ext_a, i_ext_b, valence, adrenaline_a, gain,
         )
         _summarize(
-            f"closed-loop gain={gain:g}",
-            spikes_a, spikes_b, adr,
+            f"closed-loop gain={gain:g}", spikes_a, spikes_b, adr,
         )
-
     print()
     a_segments = _a_rates_by_segment(spikes_a)
     a_str = "[" + ", ".join(f"{r:.1f}" for r in a_segments) + "]"
     print(f"A's per-segment rates (Hz):  {a_str}")
+
+
+def _run_multi_seed(seed: int, n_seeds: int) -> None:
+    """Run n_seeds consecutive seeds; aggregate fitness mean/std/min/max."""
+    per_condition: dict[str, list[float]] = {}
+    for i in range(n_seeds):
+        s = seed + i * 37  # stride to get independent draws
+        fits = _evaluate_one_seed(s)
+        print(f"  seed {s}: " + ", ".join(
+            f"{k}={v:.3e}" for k, v in fits.items()
+        ))
+        for k, v in fits.items():
+            per_condition.setdefault(k, []).append(v)
+    print()
+    header = (
+        "condition".ljust(30) + " | "
+        + "mean".rjust(11) + " | "
+        + "std".rjust(10) + " | "
+        + "min".rjust(11) + " | "
+        + "max".rjust(11)
+    )
+    print(header)
+    print("-" * len(header))
+    for cond, vals in per_condition.items():
+        mean = statistics.mean(vals)
+        std = statistics.stdev(vals) if len(vals) > 1 else 0.0
+        mn = min(vals)
+        mx = max(vals)
+        print(
+            f"{cond:<30} | {mean:11.3e} | {std:10.2e} | "
+            f"{mn:11.3e} | {mx:11.3e}"
+        )
+
+
+def run(seed: int = 0, n_seeds: int = 1) -> None:
+    """Compare open-loop vs closed-loop adrenaline.
+
+    n_seeds=1: verbose single-seed output (original step 10 format).
+    n_seeds>1: aggregate fitness across seeds with mean/std/min/max.
+    """
+    _print_scenario_header()
+    if n_seeds == 1:
+        _run_single_seed_verbose(seed)
+    else:
+        print(f"running {n_seeds} seeds starting at {seed}...")
+        _run_multi_seed(seed, n_seeds)
     print()
     print("baselines:")
     print("  step 9 cross-E-only, no closed-loop (constant adr):  -1.56e-4")
@@ -347,5 +435,6 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--n-seeds", type=int, default=1)
     args = parser.parse_args()
-    run(seed=args.seed)
+    run(seed=args.seed, n_seeds=args.n_seeds)
