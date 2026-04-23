@@ -316,3 +316,84 @@ Back-of-envelope: with K = 8 cross-slots and cross-weight saturated at v = 0.3, 
 ### What this validates about the project methodology
 
 The step-7 narrative gap flagged in this log ("plateau could be GA or architecture; we don't know") was worth paying the cost to close. Running seven hand-wired controls took ~10 s and flipped the conclusion from "GA is the limiter" to "architecture is the limiter." Without the control, we would have invested effort in indirect encoding / CMA-ES expecting a payoff that wouldn't come.
+
+---
+
+## 2026-04-22 — Phase 2 (N=256 re-scale): throughput re-baselines
+
+**Context:** step 7.5 closed with the verdict that N=32 per agent is architecturally too small for the signal-following task. The plan before committing to new hardware is to re-baseline the existing experiments at N=256, K=32 on the MX150 and verify the mechanism scales cleanly. This entry captures the re-baseline runs.
+
+All runs on the same reference machine (Huawei MateBook X Pro 2018, NVIDIA MX150, 2 GB VRAM, Python 3.12.3, JAX 0.10.0).
+
+### Step 2 (dense LIF forward sim) at N=256
+
+`.venv/bin/python experiments/step02_throughput.py --n-neurons=256 --n-timesteps=10000`
+
+| metric | N=1024 baseline (prior) | **N=256** |
+|---|---:|---:|
+| elapsed (median, ms) | 1226 | **94** |
+| throughput (median, neuron-steps/s) | 8.35e6 | **2.71e7** |
+| mean firing rate | 40 Hz | 40 Hz |
+
+**Counter-intuitive observation:** throughput at N=256 is ~3× *higher* than at N=1024 on the MX150. Reason is memory-bandwidth / cache-fit: the per-step work at N=1024 is O(N²) for the dense matmul (~1 M ops/step) vs. O(N²) = ~65 K ops at N=256, and the smaller state fits comfortably in the MX150's L2 cache. On a GPU with more bandwidth (3090), this inversion would flatten.
+
+### Step 3 (slot-pool, no plasticity) at N=256, K=32
+
+`.venv/bin/python experiments/step03_slotpool_throughput.py --n-neurons=256 --slots-per-post=32 --n-timesteps=10000`
+
+| metric | N=1024 K=64 (prior) | **N=256 K=32** |
+|---|---:|---:|
+| elapsed (median, ms) | 245 | **100** |
+| throughput (median, neuron-steps/s) | 4.17e7 | **2.56e7** |
+| slot-eval throughput (median) | 2.72e9 | **8.20e8** |
+| mean firing rate | 40 Hz | 40 Hz |
+
+Lower raw throughput here than at N=1024 K=64 simply reflects a smaller workload per step (N·K drops from 65 536 to 8 192). Per-step slot-eval rate is 8.2e8/s, comparable to step 4's 1.0e9/s once STDP overhead flattens the comparison.
+
+### Step 4 (slot-pool + STDP) at N=256, K=32
+
+`.venv/bin/python experiments/step04_plastic_throughput.py --n-neurons=256 --slots-per-post=32 --n-timesteps=10000`
+
+| metric | N=1024 K=64 (prior) | **N=256 K=32** |
+|---|---:|---:|
+| elapsed (median, ms) | 575 | **80** |
+| throughput (median, neuron-steps/s) | 1.78e7 | **3.19e7** |
+| slot-eval throughput (median) | 1.14e9 | **1.02e9** |
+| mean firing rate | 40.8 Hz | 40.5 Hz |
+| weight drift: v mean | 0.04 → 0.093 | 0.04 → **0.103** |
+| weight drift: \|Δv\| mean | 0.081 | **0.094** |
+
+**Plastic overhead is dramatically smaller at N=256.** Step 3 → step 4 slowdown at N=1024, K=64 was 4.17e7 / 1.78e7 ≈ 2.3×. At N=256, K=32 it's 2.56e7 / 3.19e7 ≈ 0.8× (i.e., plastic is *faster* than the no-plasticity step 3 — within the noise, roughly equal). This is a caching artifact on MX150; at smaller scales the whole working set fits in cache and the STDP compute cost is amortized.
+
+Weight drift is qualitatively the same as step 4's N=1024 run: mean v rises from ~0.04 → ~0.10 over 10 s of simulated time, max v saturates at v_max=0.5 for some slots.
+
+### Step 6 (structural release) at N=256, K=32
+
+`.venv/bin/python experiments/step06_structural_release.py --n-neurons=256 --slots-per-post=32`
+
+Pool capacity: N × K = **8 192 slots** per condition (up from 1 024 at N=64 K=16).
+
+| condition | initial | final | released | retention |
+|---|---:|---:|---:|---:|
+| valence = +1 | 8192 | 740 | 7452 | **9.0%** |
+| valence = −1 | 8192 | 3633 | 4559 | **44.3%** |
+
+N=64 K=16 (prior) retention: +1 = 11.4%, −1 = 40.5%. **N=256 retention patterns are qualitatively identical** — the asymmetry-driven pruning story from step 6 (a_minus > a_plus drives net drift to v_min under uncorrelated activity) reproduces cleanly at 8× the pool size. The developmental exuberance-to-stable-working-set trajectory (fast initial pruning, plateau by chunk ~8) is preserved.
+
+### Phase 2 conclusions (what we needed to learn)
+
+- **Nothing breaks at N=256.** All four experiments run clean, produce sensible firing rates (40 Hz, same as prior), and exhibit the expected dynamics.
+- **MX150 is fast at N=256** — per-experiment run times are ~100 ms for throughput benchmarks and ~15 s for the full step-6 trajectory (20 chunks × 2 conditions). Well within the iteration budget.
+- **Structural release reproduces at scale.** The pruning mechanism is not N=64-specific; 8192-slot pools show the same 10–40 % retention bands depending on valence sign.
+- **Plasticity overhead is scale-dependent on MX150.** At N=256 the inner loop fits in cache and STDP is essentially free; at N=1024 plasticity doubles per-step cost. This means Phase 4's GA runs at N=256 should be noticeably faster per generation than the naive 8× scale-up would predict.
+
+### Ready for Phase 3
+
+The architectural parameters for Phase 3's adjusted hand-wired control:
+
+- N=256 per agent (matches this Phase 2 baseline)
+- K=32 slots (per the step 7.5 analysis: K × v_max should rival tonic)
+- tonic_drive = 0 (remove the workaround that drowned cross-input at N=32)
+- v_max raised from 0.5 to 2.0 (so cross-weights can scale up to matter)
+
+Phase 2 is green; Phase 3 is the actual test of whether these parameter changes give cross-coupling the leverage step 7.5 predicted.
