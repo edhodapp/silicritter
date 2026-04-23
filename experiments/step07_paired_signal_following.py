@@ -48,10 +48,24 @@ from silicritter.paired import (
 )
 from silicritter.plasticity import (
     PlasticNetState,
+    STDPParams,
     default_params,
     init_traces,
 )
 from silicritter.slotpool import SlotPool
+
+
+# Override for v_max (STDP weight ceiling). None = use default_params()
+# value (0.5). Phase 4 of the N=256 re-scale runs with v_max = 2.0.
+V_MAX_OVERRIDE: float | None = None
+
+
+def _stdp_params() -> STDPParams:
+    """Return STDP params, optionally with v_max overridden."""
+    base = default_params()
+    if V_MAX_OVERRIDE is None:
+        return base
+    return base._replace(v_max=V_MAX_OVERRIDE)
 
 
 # Scale
@@ -68,6 +82,13 @@ ELITE_COUNT: int = 2
 V_SIGMA: float = 0.01
 RATE_SIGMA: float = 0.05
 PRE_RESAMPLE_PROB: float = 0.03
+
+# Initial v scale for random_population (half-normal |N(0,1)| * scale).
+# Default 0.05 was tuned for v_max = 0.5. When v_max is raised (e.g.
+# Phase 4's 2.0), scale up proportionally via the CLI so the initial
+# population straddles the interesting weight range rather than
+# crowding the zero-v corner.
+V_INIT_SCALE: float = 0.05
 
 # Agent A's piecewise drive: four segments at different mV levels,
 # producing four distinct firing regimes B has to anticipate.
@@ -163,7 +184,7 @@ def _evaluate_single(
         i_ext_a, i_ext_b,
         val_a, val_b,
         adr_a, adr_b,
-        default_params(),
+        _stdp_params(),
     )
     return _prediction_fitness(spikes_a, spikes_b)
 
@@ -234,7 +255,7 @@ def _report_best(
     )
     _, spikes_a, spikes_b = simulate_paired(
         state, i_ext_a, i_ext_b, val_a, val_b, adr_a, adr_b,
-        default_params(),
+        _stdp_params(),
     )
     n_windows = N_TIMESTEPS // WINDOW_STEPS
     a_rate_hz = (
@@ -271,7 +292,7 @@ def _apply_scale_overrides(
     slots_per_post: int | None,
     n_timesteps: int | None,
 ) -> None:
-    """Apply optional N / K / T overrides to the module-level constants."""
+    """Apply optional N / K / T overrides to the module globals."""
     # pylint: disable=global-statement
     global N_NEURONS, K_SLOTS, N_TIMESTEPS
     if n_neurons is not None:
@@ -282,14 +303,34 @@ def _apply_scale_overrides(
         N_TIMESTEPS = n_timesteps
 
 
+def _apply_weight_overrides(
+    v_max: float | None,
+    v_init_scale: float | None,
+    v_sigma: float | None,
+) -> None:
+    """Apply optional v_max / v_init_scale / v_sigma overrides."""
+    # pylint: disable=global-statement
+    global V_MAX_OVERRIDE, V_INIT_SCALE, V_SIGMA
+    if v_max is not None:
+        V_MAX_OVERRIDE = v_max
+    if v_init_scale is not None:
+        V_INIT_SCALE = v_init_scale
+    if v_sigma is not None:
+        V_SIGMA = v_sigma
+
+
 def run(
     seed: int = 0,
     n_neurons: int | None = None,
     slots_per_post: int | None = None,
     n_timesteps: int | None = None,
+    v_max: float | None = None,
+    v_init_scale: float | None = None,
+    v_sigma: float | None = None,
 ) -> None:
     """Execute the paired-agent GA and report results."""
     _apply_scale_overrides(n_neurons, slots_per_post, n_timesteps)
+    _apply_weight_overrides(v_max, v_init_scale, v_sigma)
     scenario = _build_scenario()
     n_pre_b = 2 * N_NEURONS
 
@@ -300,7 +341,7 @@ def run(
     rng = jax.random.PRNGKey(seed + 100)
     rng, pop_key = jax.random.split(rng)
     population = random_population(
-        POP_SIZE, N_NEURONS, n_pre_b, K_SLOTS, pop_key
+        POP_SIZE, N_NEURONS, n_pre_b, K_SLOTS, pop_key, V_INIT_SCALE
     )
 
     # Warmup.
@@ -362,6 +403,9 @@ if __name__ == "__main__":
     parser.add_argument("--n-neurons", type=int, default=None)
     parser.add_argument("--slots-per-post", type=int, default=None)
     parser.add_argument("--n-timesteps", type=int, default=None)
+    parser.add_argument("--v-max", type=float, default=None)
+    parser.add_argument("--v-init-scale", type=float, default=None)
+    parser.add_argument("--v-sigma", type=float, default=None)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     run(
@@ -369,4 +413,7 @@ if __name__ == "__main__":
         n_neurons=args.n_neurons,
         slots_per_post=args.slots_per_post,
         n_timesteps=args.n_timesteps,
+        v_max=args.v_max,
+        v_init_scale=args.v_init_scale,
+        v_sigma=args.v_sigma,
     )

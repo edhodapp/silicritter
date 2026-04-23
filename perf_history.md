@@ -452,3 +452,61 @@ This is the kind of finding the step 7.5 note lacked the data to see: "tonic = 0
 ### Phase 3 conclusion
 
 **Architectural leverage achieved at tonic = 16 mV, v_max = 2.0, K = 32, N = 256.** Proceed to Phase 4: re-run the step-7 GA at these parameters, compare the GA's plateau to the hand-wired baseline of −1.74e−4.
+
+---
+
+## 2026-04-22 — Phase 4 (N=256 re-scale): GA re-run; Baldwin interference dominates
+
+- **Script:** `experiments/step07_paired_signal_following.py`
+- **Parameters:** N = 256, K = 32, tonic = 16 mV, v_max = 2.0, T = 2000, pop = 32, gens = 30, valence = 1 (plasticity ON, matching step 7)
+- **Hand-wired baseline to beat:** **−1.74e−4** (Phase 3's best, all-cross v = 2.0 with plasticity_rate = 0 so the static configuration persisted)
+
+### GA at default exploration parameters plateaus at step-7 level
+
+First run used the same `v_init_scale = 0.05` and `V_SIGMA = 0.01` as the original step 7 (those defaults are tuned for v_max = 0.5):
+
+| metric | value |
+|---|---:|
+| final best fitness | **−5.14e−4** |
+| final mean fitness | −5.15e−4 |
+| per-generation time | 620 ms |
+| total run time | 18.6 s |
+
+That is essentially identical to step 7's original N = 32 plateau (−5.18e−4). B fires at ~20 Hz regardless of genome — the same "silent cross-path" regime step 7 showed, because the initial v distribution (half-normal scale 0.05 → mean ~0.04) and the mutation scale (σ=0.01) can't reach the v ~ 1.5–2.0 regime in 30 generations. **The GA was searching in the wrong corner of the weight space.**
+
+### Scaled exploration parameters help modestly
+
+Added `--v-init-scale` and `--v-sigma` CLI overrides. Second run with `v_init_scale = 0.5`, `v_sigma = 0.1` (scales roughly proportional to v_max):
+
+| metric | default | scaled |
+|---|---:|---:|
+| final best fitness | −5.14e−4 | **−4.17e−4** |
+| B rate at best genome | 20 Hz flat | 10–27 Hz (wider) |
+
+The scaled-exploration GA **does** reach the interesting weight regime — B's segment rates now span 10–27 Hz (vs. 20 Hz flat). Fitness is ~20 % better. **But the GA plateau is still ~2.4× worse than the hand-wired baseline.**
+
+### Diagnosis: Baldwin interference is dominant here
+
+The hand-wired Phase 3 winner had every B slot bound to A with v = 2.0 *and plasticity_rate = 0 so the configuration persisted*. The Phase 4 GA evolves initial configurations but runs STDP during each critter's lifetime. With default STDP parameters (a_minus = 0.012 > a_plus = 0.010), **uncorrelated activity drifts cross-weights toward zero faster than the GA can evolve them upward**. Whatever "high-cross-weight" initial configuration the GA discovers gets eroded within the 2 000-step evaluation window, and the resulting behaviour reverts to something close to the silent-cross baseline.
+
+This was flagged as a latent risk in step 7's perf entry ("Baldwin interference is latent but present — the GA encodes initial slot-pool configuration; STDP reshapes the weights during the critter's lifetime. Fitness measures the lifetime-shaped behavior."). At N = 32 with v_max = 0.5 the GA's effective search space was small enough that Baldwin interference was invisible noise. At N = 256 with v_max = 2.0, the search space is large enough that the interference is the dominant force.
+
+### What Phase 4 actually validates (and what it doesn't)
+
+- **Validates:** the two-loop machinery works at N = 256. GA runs, fitness changes with genome, per-generation compute budget is 0.6 s on MX150 which is tight but tolerable.
+- **Validates:** the default GA exploration parameters are poorly matched to raised v_max. This is a real, fixable issue — any future scale-up of v_max should scale v_init_scale and v_sigma proportionally.
+- **Does not validate:** that the current silicritter architecture can solve signal-following with direct-encoding GA + plasticity. The hand-wired optimum sits above the GA's reach; the gap is not a GA encoding failure per se — it is the GA failing to *preserve* a high-v configuration against the STDP drift during evaluation.
+
+### The clean next experiment
+
+Three ways to close the Baldwin gap:
+
+1. **GA with plasticity disabled during evaluation** (valence = 0 in the scenario). Tests whether the GA's direct encoding can find the hand-wired optimum when STDP isn't fighting it. If yes → the primitive + GA work fine, we just can't run plasticity during GA eval. If no → the GA's genome encoding (not plasticity) is the limiter.
+2. **Evolve STDP hyperparameters alongside initial weights.** The genome gains a second payload: per-critter a_plus, a_minus, tau values. GA finds STDP rules that don't erode cross-weights during the lifetime, in parallel with the initial pool. Meta-learning-style.
+3. **Indirect encoding (CPPN generator).** As-flagged previously: dramatically smaller search space via a generator network that produces consistent high-cross pools. Still leaves Baldwin interference intact; fixes a different failure mode.
+
+**(1) is the cheapest and most informative diagnostic.** ~30 s of compute. It tells us whether the GA's direct-encoding can solve the task at all at this scale, separate from the plasticity complication.
+
+### Phase 4 conclusion
+
+Phase 4's operational outcome: the step-7 plateau (−5.18e−4) and the Phase 4 plateau (−4.17e−4) are both well above the hand-wired optimum (−1.74e−4). The gap is dominated by Baldwin interference between the GA outer loop and STDP inner loop, not by direct-encoding weakness per se. Proceeding to a Phase 4.1 control run with plasticity disabled is the natural next step — ~30 s to run, definitive on whether direct encoding itself can reach the hand-wired optimum.
