@@ -269,3 +269,50 @@ The flat-fitness result is **consistent with step 5's finding** that direct-enco
 - `PairedState` is a NamedTuple-of-NamedTuples pytree and threads cleanly through `jax.lax.scan` as the carry; no explicit pytree registration needed.
 - The two-phase `step_paired` (all LIF forward passes, then all STDP updates) means neither agent's STDP sees the partner's post-update state — verified by review. The intent "both neurons fire at the same wall-clock moment" is honored.
 - `stdp_update` now a public top-level function; `step_plastic` is a thin wrapper that preserves all existing behaviour and retains its single-population assertion. 48 tests, 100% branch coverage across 7 library modules.
+
+---
+
+## 2026-04-22 — Step 7.5: hand-wired-predictor control for signal-following
+
+- **Script:** `experiments/step07b_handwired_control.py`
+- **Purpose:** answer the step-7 narrative gap -- is the GA the limiter, or is the task near its architectural ceiling? Run seven hand-wired B pool configurations (`plasticity_rate = 0` to freeze weights) through the identical step-7 scenario and compare fitness to the GA plateau.
+
+### Results
+
+All seven configurations sit within 10 % of the GA plateau; none meaningfully beats it:
+
+| config | fitness | vs. GA | B rates by segment (Hz) |
+|---|---:|---:|---|
+| silent (v = 0) | −5.63e−4 | 1.09× worse | [18, 18, 18, 18] |
+| all-recurrent v = 0.05 | −5.63e−4 | 1.09× worse | [18, 18, 18, 18] |
+| all-recurrent v = 0.10 | −5.63e−4 | 1.09× worse | [18, 18, 18, 18] |
+| all-cross v = 0.05 | **−5.18e−4** | 1.00× | [18, 18, 18, 20] |
+| all-cross v = 0.10 | −5.21e−4 | 1.01× worse | [18, 18, 18, 20] |
+| all-cross v = 0.20 | −5.36e−4 | 1.03× worse | [18, 18, 20, 18] |
+| all-cross v = 0.30 | −5.47e−4 | 1.06× worse | [18, 18, 20, 18] |
+
+A's per-segment rates over the same run: [28, 44, 32, 50] Hz.
+
+### Verdict (inverting the step 7 hypothesis)
+
+**The GA encoding is not the bottleneck.** No hand-wired configuration -- silent, pure-recurrent, pure-cross, or graded cross-weights from 0.05 to 0.30 -- moves B's firing rate more than ±2 Hz off 18 Hz. A varies across 22 Hz of range (28 → 50 Hz); none of that range leaks through to B meaningfully.
+
+The step-7 conclusion "plateau = GA is the limiter" was the plausible one but wrong. The actual ceiling is architectural.
+
+### Why the architecture caps at this fitness
+
+Back-of-envelope: with K = 8 cross-slots and cross-weight saturated at v = 0.3, the maximum per-step synaptic input to a B neuron when every A neuron fires is 8 × 0.3 = 2.4 mV. The membrane update is `dv = i_total * dt / τ_m`, so that 2.4 mV contributes at most 2.4 / 20 = 0.12 mV to B's V per step. B's tonic drive is 16 mV. The cross-influence is a small (<1 %) perturbation on a baseline that already dominates the membrane dynamics. B fires at whatever rate the tonic produces (~18 Hz with this tonic) and the cross input is noise.
+
+### Actionable implications
+
+- **The current step-7 scenario is architecture-limited, not optimizer-limited.** Switching to indirect encoding, ES, or CMA-ES on this task will NOT meaningfully improve fitness.
+- **To make the task solvable we need architectural changes**, in decreasing order of priority:
+  - **Remove or reduce B's tonic drive.** With tonic = 0, B depends on cross-input entirely; cross-weight variation then has leverage. The step-7 choice of 16 mV tonic was a workaround for the original "B never fires" problem, but it drowned out the signal.
+  - **Raise `v_max`** so cross-weights can go higher than 0.5. Current default caps saturate before cross can rival tonic.
+  - **Increase K** so the sum of cross-slot contributions grows.
+  - **Reduce N** or concentrate cross-slots so a smaller number of well-placed slots can drive B coherently.
+- **Before any more optimizer work or a different task**, rerun step 7 with tonic = 0 and `v_max = 2.0` (or similar); a follow-up should establish whether that variant admits a meaningful dependence of B on A. If yes, then GA vs. better optimizer becomes a live question again. If not, the architecture scale (N = 32) is too small for this specific task.
+
+### What this validates about the project methodology
+
+The step-7 narrative gap flagged in this log ("plateau could be GA or architecture; we don't know") was worth paying the cost to close. Running seven hand-wired controls took ~10 s and flipped the conclusion from "GA is the limiter" to "architecture is the limiter." Without the control, we would have invested effort in indirect encoding / CMA-ES expecting a payoff that wouldn't come.
