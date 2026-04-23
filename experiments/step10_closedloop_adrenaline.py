@@ -31,16 +31,19 @@ Usage:
 from __future__ import annotations
 
 import statistics
-from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
 
+from silicritter.closedloop import (
+    ControllerParams,
+    simulate_closedloop,
+)
 from silicritter.lif import init_state
 from silicritter.paired import (
     PairedState,
     make_pool_for_partner,
-    step_paired,
+    simulate_paired,
 )
 from silicritter.plasticity import (
     PlasticNetState,
@@ -69,14 +72,6 @@ CONTROLLER_DECAY: float = 0.98   # EMA decay per step (tau ~= 50 ms at dt=1ms)
 BASELINE_ADRENALINE: float = 1.0
 ADR_MIN: float = 0.5
 ADR_MAX: float = 3.0
-
-
-class ControllerState(NamedTuple):
-    """Leaky-integrator state of the adrenaline controller."""
-
-    rate_a_ema: jax.Array
-    rate_b_ema: jax.Array
-    adrenaline_b: jax.Array
 
 
 def _stdp_params() -> STDPParams:
@@ -136,6 +131,13 @@ def _build_initial_state(pool_a: SlotPool, pool_b: SlotPool) -> PairedState:
     )
 
 
+def _ctrl_params(gain: float) -> ControllerParams:
+    return ControllerParams(
+        decay=CONTROLLER_DECAY, baseline=BASELINE_ADRENALINE, gain=gain,
+        adr_min=ADR_MIN, adr_max=ADR_MAX,
+    )
+
+
 def _run_closed_loop(
     initial_state: PairedState,
     a_is_inh: jax.Array,
@@ -147,58 +149,15 @@ def _run_closed_loop(
     gain: float,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Run one closed-loop sim; return (spikes_a, spikes_b, adr_trace)."""
-    stdp = _stdp_params()
-
-    def scan_step(
-        carry: tuple[PairedState, ControllerState],
-        drive: tuple[jax.Array, jax.Array, jax.Array, jax.Array],
-    ) -> tuple[
-        tuple[PairedState, ControllerState],
-        tuple[jax.Array, jax.Array, jax.Array],
-    ]:
-        paired_state, ctrl = carry
-        i_ext_a_t, i_ext_b_t, val_t, adr_a_t = drive
-        adr_b_t = ctrl.adrenaline_b
-        next_paired = step_paired(
-            paired_state,
-            i_ext_a=i_ext_a_t, i_ext_b=i_ext_b_t,
-            valence_a=val_t, valence_b=val_t,
-            adrenaline_a=adr_a_t, adrenaline_b=adr_b_t,
-            stdp_params=stdp,
-            gain_mode="tau_m_scale",
-            a_is_inhibitory=a_is_inh,
-            b_is_inhibitory=b_is_inh,
-            i_weight_multiplier=I_WEIGHT_MULTIPLIER,
-        )
-        spikes_a = next_paired.a.lif.spikes
-        spikes_b = next_paired.b.lif.spikes
-        rate_a_now = spikes_a.astype(jnp.float32).mean()
-        rate_b_now = spikes_b.astype(jnp.float32).mean()
-        new_rate_a = ctrl.rate_a_ema * CONTROLLER_DECAY + rate_a_now * (
-            1.0 - CONTROLLER_DECAY
-        )
-        new_rate_b = ctrl.rate_b_ema * CONTROLLER_DECAY + rate_b_now * (
-            1.0 - CONTROLLER_DECAY
-        )
-        error = new_rate_a - new_rate_b
-        new_adr = jnp.clip(
-            jnp.float32(BASELINE_ADRENALINE) + jnp.float32(gain) * error,
-            jnp.float32(ADR_MIN),
-            jnp.float32(ADR_MAX),
-        )
-        next_ctrl = ControllerState(new_rate_a, new_rate_b, new_adr)
-        return (next_paired, next_ctrl), (spikes_a, spikes_b, new_adr)
-
-    initial_ctrl = ControllerState(
-        rate_a_ema=jnp.float32(0.0),
-        rate_b_ema=jnp.float32(0.0),
-        adrenaline_b=jnp.float32(BASELINE_ADRENALINE),
+    return simulate_closedloop(
+        initial_state, _ctrl_params(gain),
+        i_ext_a, i_ext_b, valence, valence, adrenaline_a,
+        _stdp_params(),
+        gain_mode="tau_m_scale",
+        a_is_inhibitory=a_is_inh,
+        b_is_inhibitory=b_is_inh,
+        i_weight_multiplier=I_WEIGHT_MULTIPLIER,
     )
-    drives = (i_ext_a, i_ext_b, valence, adrenaline_a)
-    _, (spikes_a, spikes_b, adr_trace) = jax.lax.scan(
-        scan_step, (initial_state, initial_ctrl), drives
-    )
-    return spikes_a, spikes_b, adr_trace
 
 
 def _run_open_loop(
@@ -211,36 +170,17 @@ def _run_open_loop(
     adrenaline_a: jax.Array,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Baseline: constant adrenaline = 1.0 on B. Equivalent to step 9."""
-    stdp = _stdp_params()
-
-    def scan_step(
-        carry: PairedState,
-        drive: tuple[jax.Array, jax.Array, jax.Array, jax.Array],
-    ) -> tuple[PairedState, tuple[jax.Array, jax.Array, jax.Array]]:
-        i_ext_a_t, i_ext_b_t, val_t, adr_a_t = drive
-        adr_b_t = jnp.float32(BASELINE_ADRENALINE)
-        next_paired = step_paired(
-            carry,
-            i_ext_a=i_ext_a_t, i_ext_b=i_ext_b_t,
-            valence_a=val_t, valence_b=val_t,
-            adrenaline_a=adr_a_t, adrenaline_b=adr_b_t,
-            stdp_params=stdp,
-            gain_mode="tau_m_scale",
-            a_is_inhibitory=a_is_inh,
-            b_is_inhibitory=b_is_inh,
-            i_weight_multiplier=I_WEIGHT_MULTIPLIER,
-        )
-        return next_paired, (
-            next_paired.a.lif.spikes,
-            next_paired.b.lif.spikes,
-            adr_b_t,
-        )
-
-    drives = (i_ext_a, i_ext_b, valence, adrenaline_a)
-    _, (spikes_a, spikes_b, adr_trace) = jax.lax.scan(
-        scan_step, initial_state, drives
+    adrenaline_b = jnp.full_like(adrenaline_a, BASELINE_ADRENALINE)
+    _, spikes_a, spikes_b = simulate_paired(
+        initial_state,
+        i_ext_a, i_ext_b, valence, valence, adrenaline_a, adrenaline_b,
+        _stdp_params(),
+        gain_mode="tau_m_scale",
+        a_is_inhibitory=a_is_inh,
+        b_is_inhibitory=b_is_inh,
+        i_weight_multiplier=I_WEIGHT_MULTIPLIER,
     )
-    return spikes_a, spikes_b, adr_trace
+    return spikes_a, spikes_b, adrenaline_b
 
 
 def _prediction_fitness(

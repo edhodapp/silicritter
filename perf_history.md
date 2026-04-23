@@ -804,3 +804,47 @@ Earlier entry flagged "single seed" as a caveat. This entry discharges that cave
 ### Caveat this run surfaces
 
 The zero-variance at gain ≥ 50 is a **new** finding worth its own note: the controller is rail-limited at its output, not at the neuron-dynamics level. If a future task requires B to track A beyond 50 Hz peaks (the current A_DRIVE_PROFILE's max), ADR_MAX = 3.0 will become the ceiling. The substrate has headroom; the controller currently does not.
+
+---
+
+## 2026-04-23 — Step 11: CPPN GA + E/I + closed-loop adrenaline
+
+- **Script:** `experiments/step11_cppn_closedloop.py`
+- **Library:** this run also promotes the closed-loop controller from the step 10 script into `src/silicritter/closedloop.py` (`ControllerState`, `ControllerParams`, `init_controller`, `step_closedloop`, `simulate_closedloop`), with 100% branch-coverage tests in `tests/test_closedloop.py`. Step 10 was refactored to call into the library and produces byte-identical multi-seed output.
+- **Substrate:** identical to step 10 — N=256, K=32, T=2000, E:I 80/20, i_mult=4, tau_m_scale gain mode. A's pool fixed at seed 777.
+- **GA:** pop=32, 30 generations, CPPN hidden_dim=8 (51 weights per genome), init_scale=1.0, mutate_sigma=0.15, elite=2, tournament=3. Same hyperparameters as step 7e so comparison is fair.
+- **Conditions:** (1) **open-loop** — CPPN evolves B's pool with constant adr=1.0; (2) **closed-loop** — CPPN evolves B's pool with the controller on at gain=50 during every fitness evaluation.
+
+### Result
+
+| condition | best fitness | decoded B pool topology |
+|---|---:|---|
+| step 9 hand-wired cross-E, open | −1.56e−4 | 100% cross-E, v=2.0 (uniform random over A's E neurons) |
+| step 10 hand-wired cross-E, closed-loop gain=50 | −5.60e−5 | same as step 9 |
+| step 7e CPPN GA, no E/I, open | −1.70e−4 | high cross, high v |
+| **step 11 CPPN GA + E/I, open-loop** | **−1.412e−4** | 100% cross, v mean 1.999, max 2.000 |
+| **step 11 CPPN GA + E/I, closed-loop gain=50** | **−4.923e−5** | **87.9% cross / 12.1% recurrent**, v mean 1.992, max 1.994 |
+
+Both step 11 conditions converge inside 5 generations and plateau for the remaining 25. Total wall time: ~37 s on the MX150.
+
+### What this run measures
+
+- **Open-loop CPPN+E/I beats step 9's hand-wired cross-E (−1.41e−4 vs −1.56e−4, ~10%).** Step 9 drew A's E pre-ids uniformly at random from A's 205 excitatory neurons. The CPPN-decoded pool is also 100% cross-E at v=2.0 (within float-precision of v_max), but it is *not* a uniform-random draw — the CPPN's output distribution concentrates some B post-neurons onto a shared subset of A's E neurons. That clustered connectivity correlates input across B's post-neurons, changing B's rate dynamics enough to shave 10% off the MSE at the static ceiling. The GA didn't break the architectural ceiling here — it found a better *sampling* of the same cross-E-only topology.
+- **Closed-loop CPPN+E/I beats step 10's hand-wired by ~12% (−4.92e−5 vs −5.60e−5), and — this is the informative part — the evolved topology is NOT cross-E-only.** ~12% of B's slots (≈990 of 8192) bind to B's own neurons (recurrent). The GA discovered that, under closed-loop gain, adding ~12% recurrent E gives the controller a second lever to work with: adrenaline shortens `tau_m`, which speeds integration of both A-driven cross input AND B→B recurrent input. At the segment transitions where the EMA-lag residual lived, the recurrent component provides transient amplification the pure-cross config didn't have.
+- **The "closed-loop saturation at ADR_MAX" story from step 10's multi-seed note is incomplete.** Step 10 argued the controller was rail-limited at gain≥50 and therefore topology wouldn't help. Step 11 refutes that: topology *does* help, just not through the same mechanism. The pure-cross B at gain=50 saturates adrenaline at the rail, yes; but the 88/12 cross/recurrent B at gain=50 can sit at a lower adrenaline and still track A, because recurrence handles part of the amplification the rail-limited adrenaline was being asked to do.
+
+### The specific numbers, interpreted
+
+- Static ceiling (no closed loop, no topology tricks): −1.56e−4 (step 9).
+- Static ceiling with GA-discovered topology tricks: −1.41e−4. A ~10% improvement purely from better connectivity sampling, no controller involved.
+- Closed-loop ceiling with hand-wired topology: −5.60e−5 (step 10). ~3.5× better than static.
+- Closed-loop ceiling with GA-discovered topology: −4.92e−5. Another ~12% on top of that.
+
+The composition effects stack: smart topology alone gives ~10%; closed-loop alone gives ~3.5×; smart topology + closed-loop gives ~3.5× × ~1.12 ≈ 4.0× over the step 9 static baseline.
+
+### Caveats
+
+- **Single seed.** Step 11's conclusions rest on seed=0 for the CPPN init and seed=0 for E/I assignment. Step 1's multi-seed discipline should be reapplied here before any of these numbers get cited as robust findings; the topology discovery in particular could be seed-sensitive (different initial populations might converge on different non-cross fractions). A ~5-seed confirmation run would take ~3 minutes of wall time.
+- **Plasticity ran but did nothing load-bearing.** As in step 10, the CPPN-decoded pool has plasticity_rate = 0 everywhere, so STDP updates are zero-weight. The fitness reflects the CPPN-decoded topology evaluated under the controller, not any learned evolution of that topology during the simulation.
+- **The "12% recurrent" finding is a population statistic, not a circuit.** I haven't inspected *which* B post-neurons get the recurrent slots or whether the recurrent fraction is clustered by post-neuron. Could be uniformly sprinkled (each post has ~4 of 32 slots recurrent) or could be pathological (a small subset of posts are fully recurrent, the rest are fully cross). That distinction matters architecturally.
+- **Task is still "match A's rate."** This run inherits step 10's task limitations. The GA isn't being asked to *predict* anything non-trivial; it's being asked to track a piecewise-constant signal with its input-to-output transfer function.
