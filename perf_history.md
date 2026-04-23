@@ -848,3 +848,46 @@ The composition effects stack: smart topology alone gives ~10%; closed-loop alon
 - **Plasticity ran but did nothing load-bearing.** As in step 10, the CPPN-decoded pool has plasticity_rate = 0 everywhere, so STDP updates are zero-weight. The fitness reflects the CPPN-decoded topology evaluated under the controller, not any learned evolution of that topology during the simulation.
 - **The "12% recurrent" finding is a population statistic, not a circuit.** I haven't inspected *which* B post-neurons get the recurrent slots or whether the recurrent fraction is clustered by post-neuron. Could be uniformly sprinkled (each post has ~4 of 32 slots recurrent) or could be pathological (a small subset of posts are fully recurrent, the rest are fully cross). That distinction matters architecturally.
 - **Task is still "match A's rate."** This run inherits step 10's task limitations. The GA isn't being asked to *predict* anything non-trivial; it's being asked to track a piecewise-constant signal with its input-to-output transfer function.
+
+---
+
+## 2026-04-23 — Step 12: tonic-drive sweep under E/I + closed-loop
+
+- **Script:** `experiments/step12_tonic_sweep.py`
+- **Question:** `B_BASELINE_DRIVE_MV = 16.0` has been a load-bearing kludge since step 7. Step 9 added E/I substrate; step 10 added closed-loop adrenaline. Does either — individually or combined — make the tonic redundant? How far can we peel it off before B's tracking breaks?
+- **Setup:** step 10's hand-wired cross-E-only B pool (v = 2.0), identical across the sweep. Two conditions per tonic value: open-loop (const adr = 1.0) and closed-loop (gain = 50).
+- **Reference:** A's per-segment firing rates are [28.0, 44.0, 32.0, 50.0] Hz.
+
+### Result
+
+| tonic (mV) | open-loop fit | open-loop B rates (Hz) | closed-loop fit | closed-loop B rates (Hz) |
+|---:|---:|:---|---:|:---|
+| 16.0 | −1.566e−4 | [28.0, 28.7, 32.0, 30.8] | −5.595e−5 | [28.0, 44.0, 32.0, 50.0] |
+| 12.0 | −6.273e−4 | [14.0, 17.1, 16.0, 17.0] | −9.117e−5 | [28.0, 39.4, 31.8, 40.4] |
+|  8.0 | −1.637e−3 | [ 0.0,  0.0,  0.0,  0.0] | −3.850e−4 | [14.0, 25.1, 16.0, 30.5] |
+|  4.0 | −1.637e−3 | [ 0.0,  0.0,  0.0,  0.0] | −1.637e−3 | [ 0.0,  0.0,  0.0,  0.0] |
+|  0.0 | −1.637e−3 | [ 0.0,  0.0,  0.0,  0.0] | −1.637e−3 | [ 0.0,  0.0,  0.0,  0.0] |
+
+### Findings
+
+- **Open-loop collapses fast.** At tonic = 12 mV, B's firing rate hollows out (14–17 Hz across all segments, no shape). At tonic ≤ 8 mV, B is completely silent — cross-E-only input from A cannot push B above threshold without a baseline drive to keep its membrane near V_thresh. The −1.637e−3 fitness floor is the "B never fires" pessimum, i.e., `mean((0 − a_next)^2)` across windows.
+- **Closed-loop pushes the cliff down by 4 mV.** At tonic = 12, closed-loop still tracks A cleanly: [28, 39, 32, 40] vs A's [28, 44, 32, 50], fitness −9.1e−5 (~1.6× worse than the tonic = 16 baseline of −5.6e−5, but still an order of magnitude better than open-loop at the same tonic). At tonic = 8, B becomes partially responsive — [14, 25, 16, 31], roughly the right shape at half amplitude, fitness −3.85e−4 (4× worse than tonic = 16 closed-loop, but still meaningfully better than the open-loop floor).
+- **Closed-loop has its own cliff at tonic ≤ 4.** Once tonic drops to 4 mV, no amount of adrenaline can rescue B. The physics: `V_eq = V_rest + i_total`, and `ISI = (τ_m / adrenaline) × ln((V_eq − V_reset) / (V_eq − V_thresh))`. When `V_eq < V_thresh`, the log argument is negative and ISI is undefined — the neuron simply cannot spike, no matter how small `τ_m / adrenaline` gets. Closed-loop rescues near-threshold neurons by speeding their integration; it cannot rescue sub-threshold neurons that never reach the firing condition.
+
+### Takeaway for the project
+
+**Tonic is not redundant. It is load-bearing, for a reason different from the one I'd been casually assuming.** I'd been treating tonic as a "scaffold" that might be replaceable by E/I self-balancing; that framing was wrong. Tonic provides the *minimum excitation floor* below which cross-input cannot push B to threshold. E/I substrate shapes existing excitation (inhibition clips runaway peaks, cross-E provides signal), but it does not generate novel excitation — inhibition cannot create action potentials.
+
+The analogy: tonic is like the cortical default-mode's metabolic baseline. Real cortex has ongoing spontaneous activity even in the absence of stimulus; that activity keeps neurons near threshold so incoming signals arrive at a responsive population. Remove the baseline (deep anesthesia, coma), and stimuli fail to propagate even through intact circuitry.
+
+### What might actually replace tonic (future work)
+
+- **Recurrent E.** Step 11's closed-loop-evolved pool had 12% recurrent slots. At tonic = 0, that recurrence could in principle self-sustain activity once a single spike occurs. But this requires bootstrapping — *something* has to fire the first spike. In biology, spontaneous synaptic noise handles that.
+- **Synaptic noise.** A very low-amplitude Gaussian noise current added to each B neuron would provide the "randomness floor" cortex uses for spontaneous activity. Would need to verify that the noise doesn't destroy the MSE fitness signal.
+- **Structural-plasticity-driven recurrent growth.** If B's recurrent fraction can grow under valence pressure to levels that sustain activity, tonic becomes truly optional. But this is a big architectural ask, not a quick experiment.
+
+### Caveats
+
+- **Single seed.** As with steps 10 and 11. Step 1's multi-seed discipline should reapply here before citing these numbers as robust findings.
+- **Step 11's evolved pool NOT tested here.** This sweep used step 10's hand-wired 100%-cross pool. The step 11 evolved pool (87.9% cross / 12.1% recurrent) might push the cliff down further under closed-loop, because recurrent E provides self-amplification once any spikes occur. That's a natural follow-up experiment.
+- **Plasticity off throughout.** `plasticity_rate = 0` means no weight adaptation during the sim. Whether STDP would grow B's effective sensitivity to cross-input enough to recover from low-tonic regimes is untested — but given the "sub-threshold physics" reason for the cliff, probably not.
