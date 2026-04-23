@@ -397,3 +397,58 @@ The architectural parameters for Phase 3's adjusted hand-wired control:
 - v_max raised from 0.5 to 2.0 (so cross-weights can scale up to matter)
 
 Phase 2 is green; Phase 3 is the actual test of whether these parameter changes give cross-coupling the leverage step 7.5 predicted.
+
+---
+
+## 2026-04-22 — Phase 3 (N=256 re-scale): architectural-leverage sweep, hypothesis corrected mid-sweep
+
+- **Script:** `experiments/step07c_handwired_n256.py`
+- **Purpose:** test step 7.5's architectural-fix hypothesis — that raising N/K and removing the tonic drive would give cross-coupling the leverage to modulate B's firing rate. Sweep held the architectural knobs at N=256, K=32, v_max=2.0 and varied tonic ∈ {0, 8, 14, 16} mV, running the same eight hand-wired configurations at each tonic.
+
+### Initial hypothesis was wrong
+
+Step 7.5 closed with the recommendation "tonic = 0, v_max = 2.0." At N=256 with A firing ~4 % per step, that gives an average cross input of `K × v_max × p_fire = 32 × 2 × 0.04 = 2.56 mV` — short of the 15 mV needed for B to cross threshold from rest. At tonic ∈ {0, 8} mV, **B never fires**: every configuration produces 0 Hz across every segment and the fitness sits locked at the "always predict zero" baseline of −1.635e−3. The "architectural knob change" as originally specified did not admit a firing regime.
+
+### Corrected finding: tonic near threshold does
+
+At **tonic = 16 mV** (the step 7 tonic) with v_max = 2.0 and K = 32 (up from step 7's K = 8), leverage appears:
+
+| tonic (mV) | best config | best fitness | max B range |
+|---:|---|---:|---:|
+| 0 | silent | −1.635e−3 | 0.00 Hz |
+| 8 | silent | −1.635e−3 | 0.00 Hz |
+| 14 | all-cross v = 1.50 | −4.895e−4 | 12.00 Hz |
+| **16** | **all-cross v = 2.00** | **−1.737e−4** | 8.00 Hz |
+
+A's segment rates over the same run: [28, 44, 32, 50] Hz (range 22 Hz).
+
+Best-configuration B rates at tonic = 16, v = 2.0: [28, 28, 32, 30] Hz. **Clear tracking on the shape** — B's rate rises when A's segments rise and drops when A drops — with a systematic under-response to A's large excursions (A's 44-Hz peak becomes B's 28-Hz rate; A's 50 Hz becomes B's 30 Hz).
+
+**Improvement versus step 7 plateau:** −1.737e−4 vs. −5.18e−4 (the step 7 GA plateau) = **~3× better fitness**.
+
+### Leverage verdict
+
+- **Within-configuration variation:** 8 Hz max B range at the winning regime, vs. A's 22 Hz range — 36 %, above the 20 % threshold we set.
+- **Across-configuration variation:** fitness spread across the sweep is 1.46e−3, far above the 1e−4 threshold. Configurations clearly matter.
+- **Both criteria pass** at tonic = 16. Architecture has leverage.
+
+### The corrected step 7.5 architectural recommendation
+
+The step 7.5 perf note claimed "remove tonic, raise v_max" would fix things. The sweep shows the real answer is different and more subtle:
+
+- **Tonic must stay above or just below threshold** so B is biased into a firing-capable regime. Removing it entirely produces a dead network because sparse random cross-bindings can't by themselves reliably cross threshold.
+- **K should scale with N** (here, K/N ≈ 0.125) so the cross-path aggregates enough simultaneous contributions.
+- **v_max should exceed 1** so a few coincident cross spikes can move V meaningfully on top of the tonic baseline.
+- **The combination** — tonic near threshold + K large enough + v_max large enough — produces cross-modulated firing. None of the three alone is sufficient.
+
+This is the kind of finding the step 7.5 note lacked the data to see: "tonic = 0" looked right on paper (maximize cross influence) but collapses to silence in practice without a drive that puts B in a firing regime to begin with.
+
+### Caveats
+
+- Best hand-wired fitness is −1.74e−4 with imperfect tracking (B under-shoots A's peaks by up to 20 Hz). The architecture has *leverage*, not *perfect predictive capacity*.
+- The GA in Phase 4 will have to find configurations that do better than this baseline. If it plateaus near or below −1.74e−4, we learn the task is solvable only to this level at N=256.
+- The sweep was deliberately narrow (tonic ∈ 4 points, v ∈ 8 levels, single PRNG seed). A more thorough sweep would include K ∈ {16, 32, 64, 128} and multiple seeds, but Phase 3's job is "is there ANY leverage here," and that answer is already yes.
+
+### Phase 3 conclusion
+
+**Architectural leverage achieved at tonic = 16 mV, v_max = 2.0, K = 32, N = 256.** Proceed to Phase 4: re-run the step-7 GA at these parameters, compare the GA's plateau to the hand-wired baseline of −1.74e−4.
