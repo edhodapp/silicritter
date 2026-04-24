@@ -1077,3 +1077,54 @@ A reasonable expectation: memory upgrades (fractional EMA in controller, recurre
 - **Empirical autocov estimation has sampling error**, especially at high lags. At n_windows=20, only ~19 samples of lag-1 autocov; variance on the estimate is substantial. Using longer simulations (N_TIMESTEPS=10000 → 100 windows) would tighten the floor estimate.
 - **max_lag=10 (half of n_windows).** DL-based floor converges as max_lag grows; using the full history minus 1 might push the floor slightly lower.
 - **Empirical autocov is a biased estimator.** The N-normalized (rather than (N-k)-normalized) form is consistent but biased low at high lags; the floor might be slightly underestimated as a result. For a precise measurement, the unbiased form should be used — but the 2× gap is bigger than that bias.
+
+---
+
+## 2026-04-23 — Step 16: STDP-driven learning with plasticity turned on
+
+- **Script:** `experiments/step16_stdp_learning.py`
+- **First silicritter experiment with `plasticity_rate > 0`.** Every step from 9 onward ran with `plasticity_rate = 0` everywhere, so STDP was wired but did nothing. Step 16 asks: does STDP actually reshape a random B pool into a tracking-capable one under a valence-gated closed-loop reward?
+- **Setup:** B's initial pool is random (uniform `pre_ids` over `[0, 2N)`, truncated-Gaussian `v`). A hand-wired as in step 10. Valence is a shaped reward computed online from rate EMAs: `v = max(0, 1 − |rate_a_ema − rate_b_ema| / 0.015)`. Closed-loop adrenaline controller on at gain=50. Three-phase structure: Phase A measures pre-training fitness (plasticity frozen), Phase B trains for 20k steps (plasticity on), Phase C measures post-training fitness (plasticity re-frozen).
+
+### Plasticity-rate sweep (mid-init: v_mean=1.0, v_std=0.3)
+
+| rate | mean v after | v std after | sat @ max | sat @ min | Phase A fit | Phase C fit | Δ |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.01 | 0.996 | 0.299 | 0.000 | 0.000 | −2.586e−4 | −2.626e−4 | −3.99e−6 (noise) |
+| 0.10 | 0.983 | 0.300 | 0.000 | 0.000 | −2.586e−4 | −2.583e−4 | +3.27e−7 (flat) |
+| 0.30 | 0.952 | 0.305 | 0.000 | 0.000 | −2.586e−4 | −2.478e−4 | +1.08e−5 |
+| 1.00 | 0.848 | 0.352 | 0.000 | 0.004 | −2.586e−4 | −2.214e−4 | +3.72e−5 |
+
+Alternative (init near saturation: v_mean=1.9, v_std=0.1, rate=1.0): Phase A = −2.961e−4, Phase C = −2.640e−4, Δ = +3.21e−5. Mean v ended at 1.756 with 3.4% at v_max.
+
+### Findings
+
+- **STDP does move weights, but only at meaningful plasticity_rate.** At rate=0.01, the accumulated change is ~0.1% of v_max over 20k steps — within measurement noise. At rate≥0.3, weight distributions shift visibly. Rate=1.0 is the operating point where the signal emerges from the noise.
+- **Motion is LTD-dominant.** Default STDP has `a_minus=0.012 > a_plus=0.01`, and in this paired substrate the mean weight *decreases* during training. B→A-I slots (cross-inhibitory) reliably produce "pre fires, post doesn't" patterns that trigger LTD; those are functionally counterproductive and STDP correctly weakens them. This is useful pruning, not runaway weakening.
+- **Fitness improves, but modestly.** At rate=1.0 the improvement is ~14% (−2.59e−4 → −2.21e−4). That's real learning — valence is 0 at task failure so STDP isn't randomly reinforcing; it IS preferentially weakening bad-for-tracking slots. But the improvement is bounded.
+- **Architecture floor is structural, not weight-related.** Post-training fitness (~−2.2e−4) is still ~4× worse than step 10's hand-wired cross-E-only (−5.60e−5). STDP adjusts `v`, not `pre_ids`. With uniform-random `pre_ids`, ~50% of slots are on B→B recurrent targets and ~10% on B→A-I targets. STDP can drive those v's toward zero but can't release the structural binding or reassign the slot. The useful-slot fraction is frozen at initialization.
+
+### The three failure modes, graded
+
+From the original experiment's pre-registered watch list:
+
+- **Runaway saturation:** partial. At init-high with rate=1.0, 3.4% hit v_max (LTP still occurs on cross-E→post correlations). But no catastrophic saturation: 96.6% stayed at or below initial. Homeostasis is informal (via v-clipping) and sufficient here.
+- **Dithering:** confirmed at rate ≤ 0.1. Weights move but the net fitness is unchanged. At those rates STDP is noise-dominated.
+- **Catastrophic weakening:** NOT observed. Lowest mean v reached was 0.848 at rate=1.0 mid-init; 0% of slots saturated at v_min. Valence-gating prevents the "everything goes to zero" failure mode the pre-registration worried about.
+
+### What this says about the larger project
+
+The project pitch has always been "innate scaffolds evolved by GA, lifetime learning via STDP gated by modulators." Step 16 is the first test of the lifetime-learning leg against a concrete task, and it finds:
+- **Lifetime STDP works.** Modest but real fitness improvement from a plastic-enabled pool.
+- **Lifetime STDP is not enough alone.** From a random initial pool, STDP-only cannot reach hand-wired-optimum fitness because the topology constraint binds.
+- **Structural plasticity is the missing lever.** The release-then-reacquire dynamic (slot exuberance + pruning) is what would let the topology move under pressure. Slot *release* exists in `structural.py`; *acquisition* does not.
+
+**Step 17's obvious shape:** implement slot acquisition from the free pool. Released slots (v below threshold for long enough) re-bind to a random new pre-neuron. Combined with STDP-driven LTD, this is the exuberance-and-sculpting dynamic the project was always pitching. Expect: pools that start random converge toward cross-E-heavy topologies similar to step 10's hand-wired or step 11's evolved.
+
+### Caveats
+
+- **Single seed.** All results use seed=0; multi-seed confirmation before strong claims.
+- **20k steps is short for plasticity.** Longer training might show additional weight movement. Each run is ~3 seconds, so 100k-200k is cheap to try if needed.
+- **Valence signal is heuristic.** `max(0, 1 − |error|/scale)` is a first-pass shaped reward. Alternatives (sign-aware valence, threshold-gated reward, valence driven by prediction error rather than tracking error) are unexplored.
+- **Plasticity_rate=1.0 is biologically implausible.** Real synapses adjust on the ~seconds-to-minutes scale, not per-spike. The 1.0 value here is compensating for the short simulation; biological scaling would be rate ~1e-3 over hour-long simulations. Results at rate=1.0 should be read as "plasticity-saturated" rather than realistic.
+- **Only B is plastic.** Pool A is hand-wired and frozen. An ecosystem-style setup with both agents plastic would have different dynamics (and harder-to-interpret fitness).

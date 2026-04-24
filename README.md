@@ -279,6 +279,55 @@ and the diagnosis of "controller EMA is the implicit predictor"
 is a real finding. But the direction doesn't automatically
 continue.
 
+### 2026-04-23 — Step 16: lifetime STDP does real work, but is bounded by topology
+
+Pivoted back to the substrate after shelving the
+fractional-stimulus direction. First silicritter experiment with
+`plasticity_rate > 0` everywhere — every run from step 9 onward
+had plasticity mechanically wired but doing nothing.
+
+Random initial B pool, valence = shaped reward gated on rate
+tracking error, closed-loop adrenaline on at gain=50, 20k training
+steps. Sweep over `plasticity_rate` (0.01 / 0.1 / 0.3 / 1.0):
+
+| rate  | fitness Δ | interpretation           |
+|-------|-----------|---------------------------|
+| 0.01  | noise     | STDP can't find the signal |
+| 0.1   | ~flat     | dithering regime          |
+| 0.3   | +1.1e−5   | learning emerges          |
+| 1.0   | +3.7e−5   | ~14% improvement          |
+
+**Lifetime STDP works.** Default STDP is LTD-dominant; the
+learning mechanism is preferential weakening of slots whose pre
+fires but post doesn't (B→A-I cross-inhibitory targets,
+disadvantageous recurrent slots). Valence-gating prevents the
+runaway-to-zero failure mode — weakening is targeted at bad-for-
+tracking slots, not uniform.
+
+**But STDP alone is bounded.** Post-training fitness at rate=1.0
+is ~−2.2e−4, still ~4× worse than step 10's hand-wired
+cross-E-only (−5.6e−5). The reason is structural: STDP adjusts
+`v`, not `pre_ids`. With uniform-random initialization, ~50% of
+slots sit on B→B recurrent targets and ~10% on B→A-I
+inhibitory targets. STDP can drive those weights to zero but
+cannot release the slot or reassign it to a new pre-neuron.
+The useful-slot fraction is frozen at initialization.
+
+**This validates the two-lever pitch.** The project has always
+argued that evolution (outer loop, GA) and lifetime learning
+(inner loop, STDP) complement each other. Step 16 shows both
+that the inner loop *does work* and that it *cannot reach
+GA-discovered fitness from a random init*. The missing lever is
+structural plasticity — the release-and-reacquire dynamic that
+would let topology evolve under pressure. Slot *release* lives in
+`src/silicritter/structural.py`; *acquisition* (free-pool rebind
+to a new random pre-neuron) does not.
+
+**Step 17 is obvious:** implement slot acquisition. Combined with
+existing release and LTD-driven weight collapse, this closes the
+"exuberance + sculpting" developmental loop the project has been
+pitching since the originating session.
+
 ---
 
 ## License and contributions
