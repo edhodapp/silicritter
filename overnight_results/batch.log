@@ -1,0 +1,2 @@
+[2026-04-24T05:46:22+00:00] [block1] step17 factorial: 1 configs x 1 seeds = 1 runs
+[2026-04-24T05:46:45+00:00] [block1] 1/1 baseline_stdp_only seed=0: -2.586e-04 -> -2.214e-04 (delta +3.72e-05, 23.0s)

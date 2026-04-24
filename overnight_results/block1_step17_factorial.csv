@@ -1,0 +1,2 @@
+block,config,seed,acq_mode,pre_id_source,acq_initial_v,release_threshold,release_duration,fit_before,fit_after,delta,v_mean,v_std,active_frac_end,cross_e_frac_end,active_frac_min,valence_mean,wall_sec
+step17_factorial,baseline_stdp_only,0,off,uniform,0.2,0.0,10000000,-0.0002585904148872942,-0.00022142042871564627,3.7169986171647906e-05,0.8480982184410095,0.35220909118652344,1.0,0.4088134765625,1.0,0.25679662823677063,22.966332617972512
