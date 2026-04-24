@@ -73,7 +73,7 @@ def step_closedloop(
     structural_params: StructuralParams | None = None,
     a_is_inhibitory: jax.Array | None = None,
     b_is_inhibitory: jax.Array | None = None,
-    i_weight_multiplier: float = 4.0,
+    i_weight_multiplier: float = 8.0,
     dt_ms: float = DT_MS,
     tau_m_ms: float = TAU_M_MS,
 ) -> tuple[PairedState, ControllerState]:
@@ -128,7 +128,7 @@ def simulate_closedloop(
     structural_params: StructuralParams | None = None,
     a_is_inhibitory: jax.Array | None = None,
     b_is_inhibitory: jax.Array | None = None,
-    i_weight_multiplier: float = 4.0,
+    i_weight_multiplier: float = 8.0,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Run a closed-loop paired sim over T steps.
 

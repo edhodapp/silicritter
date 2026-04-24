@@ -246,6 +246,13 @@ than shaping Phase 1.
 
 ### D007: Inhibition substrate - canonical E/I values adopted provisionally
 
+**DEPRECATED 2026-04-23 18:00 UTC — superseded by D008.** Step 13's
+5-seed multi-seed perturbation sweep confirmed that `(i_fraction,
+i_mult) = (0.2, 8.0)` outperforms the D007 canonical `(0.2, 4.0)` by
+6.5% open-loop and 11.6% closed-loop, with inter-condition gaps
+>10× the single-point std. The fraction stays at 0.2; only the
+multiplier changes. See D008 for the successor.
+
 silicritter adopts canonical cortical E/I balanced-network values
 as the inhibitory substrate, added to `silicritter.slotpool` and
 `silicritter.paired` with optional `pre_is_inhibitory` parameters:
@@ -300,3 +307,66 @@ architecture. Punch list items to probe first:
 STDP currently treats E and I slots identically. Anti-Hebbian
 STDP on inhibitory synapses is the natural follow-up once closed-
 loop adrenaline (Step 10) lands.
+
+### D008: E/I canonical tightened to (i_fraction, i_mult) = (0.2, 8.0)
+
+**Supersedes:** D007 (deprecated 2026-04-23 18:00 UTC). D007 adopted
+`(0.2, 4.0)` provisionally with an explicit "may be following the
+herd" caveat and a promise to validate by perturbation. Step 13
+delivered the perturbation sweep and Step 13's multi-seed
+follow-up confirmed a better point.
+
+silicritter now uses `(inhibitory_fraction, i_weight_multiplier) =
+(0.2, 8.0)` as the default E/I configuration. The inhibitory
+fraction stays at D007's 0.2 (validated as the best row of the 5×5
+grid); only the multiplier doubles.
+
+**Evidence (step 13 multi-seed, n_seeds=5, stride=37, base_seed=0):**
+
+| point           | condition    | mean fit   | std      | gap vs canonical |
+|---|---|---:|---:|---:|
+| (0.2, 4.0)      | open-loop    | −1.561e−4  | 8.5e−7   | (baseline)       |
+| (0.2, 4.0)      | closed-loop  | −5.595e−5  | 0.0e+00  | (baseline)       |
+| (0.2, 8.0)      | open-loop    | −1.460e−4  | 9.4e−7   | 6.5% better      |
+| (0.2, 8.0)      | closed-loop  | −4.944e−5  | 5.9e−7   | 11.6% better     |
+
+Inter-point gaps (1.01e−5 open-loop, 6.5e−6 closed-loop) exceed each
+std by ~10×. Separation is robust.
+
+**Mechanism note: closed-loop std shifts from zero to positive at
+the new point.** At D007 canonical, closed-loop std was exactly
+0.0 across 5 seeds — adrenaline was rail-limited at `ADR_MAX =
+3.0`, so B's firing pattern became deterministic regardless of
+seed. At D008's `(0.2, 8.0)`, closed-loop std is 5.9e−7 (small but
+non-zero), meaning the controller is NOT saturated. Stronger
+per-synapse inhibition compresses B's firing range enough that the
+controller operates in the middle of its output band, which is why
+the tracking residual is smaller. The fitness improvement is
+*driven by* moving the operating point off the rail.
+
+**Cliff awareness preserved.** Step 13's single-seed grid showed
+`(0.4, 8.0)` collapsing to −1.06e−4 (same sub-threshold physics as
+step 12's tonic cliff). D008 sits in the safe interior of that
+grid — raising i_mult any further at this fraction still looks
+safe, but raising i_fraction along with i_mult is dangerous.
+Future tuning should perturb i_mult independently, not jointly
+with i_fraction.
+
+**Impact on code.** `I_WEIGHT_MULTIPLIER: float = 4.0` is hardcoded
+at the top of experiments/step10, step11, step12, step13. Updating
+these to 8.0 (or ideally reading from a shared default) is the next
+mechanical change. Existing perf_history entries measured at 4.0
+remain valid as historical data; re-runs at the D008 default would
+give ~7–12% better numbers across the board but don't invalidate
+the architectural findings.
+
+**What's still owed.** Inhibitory-specific STDP (Vogels 2011
+anti-Hebbian rule on I synapses) remains deferred per D007's
+closing note. The Vogels rule may interact with D008's stronger
+i_mult in ways neither the step 9 nor step 13 sweeps probed.
+
+**Naming note.** The "canonical" literature value is still
+`(0.2, 4.0)`. D008 is silicritter-specific tuning, not a claim
+about biology. Expect this point to drift again as the substrate
+evolves (recurrent growth, inhibitory STDP, learned plasticity
+rates), and plan for further supersession.

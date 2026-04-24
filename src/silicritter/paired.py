@@ -185,7 +185,7 @@ def step_paired(
     structural_params: StructuralParams | None = None,
     a_is_inhibitory: jax.Array | None = None,
     b_is_inhibitory: jax.Array | None = None,
-    i_weight_multiplier: float = 4.0,
+    i_weight_multiplier: float = 8.0,
     dt_ms: float = DT_MS,
     tau_m_ms: float = TAU_M_MS,
 ) -> PairedState:
@@ -200,7 +200,7 @@ def step_paired(
     `b_is_inhibitory` are provided (bool arrays of length N_A, N_B),
     synaptic_current applies the cortical-balanced-network convention:
     contributions sourced from inhibitory pre-neurons are negated and
-    scaled by `i_weight_multiplier` (default 4.0). When either E/I
+    scaled by `i_weight_multiplier` (default 8.0 per D008). When either E/I
     array is None, every pre is treated as excitatory and behavior
     is byte-exact to the step 2-8 code path.
     """
@@ -265,7 +265,7 @@ def simulate_paired(
     structural_params: StructuralParams | None = None,
     a_is_inhibitory: jax.Array | None = None,
     b_is_inhibitory: jax.Array | None = None,
-    i_weight_multiplier: float = 4.0,
+    i_weight_multiplier: float = 8.0,
 ) -> tuple[PairedState, jax.Array, jax.Array]:
     """Simulate a paired-agent sim over T steps.
 

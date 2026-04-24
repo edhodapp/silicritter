@@ -40,6 +40,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import statistics
 
 import jax
 import jax.numpy as jnp
@@ -265,8 +266,76 @@ def run(seed: int = 0) -> None:
     )
 
 
+CANDIDATE = (0.2, 8.0)
+
+
+def _multi_seed_stats(
+    i_frac: float,
+    i_mult: float,
+    closed_loop: bool,
+    seed: int,
+    n_seeds: int,
+) -> tuple[float, float, float, float]:
+    """Return (mean, std, min, max) fitness across n_seeds seeds."""
+    vals: list[float] = []
+    for i in range(n_seeds):
+        vals.append(
+            _run_cell(
+                i_frac, i_mult, closed_loop=closed_loop, seed=seed + i * 37,
+            )
+        )
+    mean = statistics.mean(vals)
+    std = statistics.stdev(vals) if len(vals) > 1 else 0.0
+    return mean, std, min(vals), max(vals)
+
+
+def run_multi_seed_comparison(seed: int, n_seeds: int) -> None:
+    """Multi-seed compare: D007 canonical vs the (0.2, 8.0) candidate."""
+    print(
+        f"multi-seed compare: n_seeds={n_seeds}, "
+        f"stride=37, base_seed={seed}"
+    )
+    print(f"  canonical: {CANONICAL}")
+    print(f"  candidate: {CANDIDATE}")
+    print()
+    header = (
+        "point".ljust(14) + " | "
+        + "condition".ljust(12) + " | "
+        + "mean".rjust(11) + " | "
+        + "std".rjust(10) + " | "
+        + "min".rjust(11) + " | "
+        + "max".rjust(11)
+    )
+    print(header)
+    print("-" * len(header))
+    for point in (CANONICAL, CANDIDATE):
+        for cond_label, closed in (
+            ("open-loop", False), ("closed-loop", True),
+        ):
+            mean, std, lo, hi = _multi_seed_stats(
+                point[0], point[1],
+                closed_loop=closed, seed=seed, n_seeds=n_seeds,
+            )
+            print(
+                f"{str(point):14s} | "
+                f"{cond_label:12s} | "
+                f"{mean:11.3e} | {std:10.2e} | "
+                f"{lo:11.3e} | {hi:11.3e}"
+            )
+    print()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--n-seeds", type=int, default=1,
+        help="If > 1, skip grid sweep and compare canonical vs (0.2, 8.0).",
+    )
     args = parser.parse_args()
-    run(seed=args.seed)
+    if args.n_seeds < 1:
+        parser.error("--n-seeds must be >= 1")
+    if args.n_seeds == 1:
+        run(seed=args.seed)
+    else:
+        run_multi_seed_comparison(seed=args.seed, n_seeds=args.n_seeds)

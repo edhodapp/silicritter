@@ -946,3 +946,26 @@ i_mult \\ i_frac |    0.00 |    0.10 |    0.20 |    0.30 |    0.40
 - **Single seed.** Same caveat as steps 10–12. Multi-seed confirmation is the gating requirement before any D007 supersession.
 - **Tonic fixed at 16 mV.** Step 12 showed tonic interacts with the collapse cliff; step 13's cliff might shift if tonic is lower. A joint (tonic × i_mult × i_frac) sweep would be more thorough but is 3× the grid; skipped for now.
 - **Hand-wired B pool only.** Step 11's evolved 87.9% cross / 12.1% recurrent pool might have a different E/I sensitivity profile (the recurrent slots carry B's own I neurons' spikes, so i_mult affects B's internal inhibition too). Re-running step 13 with step 11's genome-decoded pool would be the natural next step if E/I tuning becomes load-bearing for a downstream experiment.
+
+---
+
+## 2026-04-23 — Step 13 multi-seed: D008 supersedes D007
+
+- **Script:** `experiments/step13_ei_perturbation.py --n-seeds=5`
+- **Focused comparison** between D007 canonical `(0.2, 4.0)` and the step 13 grid's best-found point `(0.2, 8.0)`. Stride 37 for independent seed draws. Both open-loop and closed-loop conditions.
+
+| point | condition | mean | std | min | max |
+|---|---|---:|---:|---:|---:|
+| (0.2, 4.0) | open-loop | −1.561e−4 | 8.49e−7 | −1.571e−4 | −1.550e−4 |
+| (0.2, 4.0) | closed-loop | −5.595e−5 | 0.00e+00 | −5.595e−5 | −5.595e−5 |
+| (0.2, 8.0) | open-loop | −1.460e−4 | 9.41e−7 | −1.473e−4 | −1.450e−4 |
+| (0.2, 8.0) | closed-loop | −4.944e−5 | 5.94e−7 | −5.016e−5 | −4.862e−5 |
+
+### Findings
+
+- **Supersession confirmed.** `(0.2, 8.0)` wins open-loop by 6.5% and closed-loop by 11.6%. Inter-point gaps (1.01e−5 open-loop, 6.5e−6 closed-loop) exceed each point's std by ~10×. The improvement is robust to seed variation. **D008 records the supersession.**
+- **Mechanism clue in the closed-loop std column.** At D007 canonical, closed-loop std is exactly 0.0 — same rail-limit finding step 10's multi-seed entry flagged: adrenaline saturates at `ADR_MAX = 3.0` and B's firing pattern becomes deterministic. At D008's `(0.2, 8.0)`, closed-loop std is 5.94e−7 (small but non-zero), meaning the controller is NOT saturated. Stronger per-synapse inhibition (i_mult=8 vs 4) compresses B's firing range enough that the controller operates in the middle of its band, not at the rail. The fitness improvement is *driven by* moving the operating point off the rail.
+
+### Follow-up flagged but not chased
+
+Step 12's tonic sweep and step 13's grid were run at i_mult=4.0. Re-running either at the new D008 default (8.0) might shift the cliff locations — tonic might drop further before collapsing, or might collapse sooner because B's inhibition is stronger. Not urgent; flagged in DECISIONS.md (D008 "Impact on code" section) for anyone re-exploring these regimes.

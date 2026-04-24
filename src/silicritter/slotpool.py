@@ -136,7 +136,7 @@ def synaptic_current(
     pool: SlotPool,
     spikes: jax.Array,
     pre_is_inhibitory: jax.Array | None = None,
-    i_weight_multiplier: float = 4.0,
+    i_weight_multiplier: float = 8.0,
 ) -> jax.Array:
     """Compute per-postsynaptic synaptic input from presynaptic spikes.
 
@@ -146,10 +146,12 @@ def synaptic_current(
     When `pre_is_inhibitory` is provided, slot contributions sourced
     from inhibitory pre-neurons are negated and scaled by
     `i_weight_multiplier` to reflect the stronger per-synapse effect
-    of the smaller inhibitory population (canonical cortical balance:
-    E:I ratio ~4:1, I-weight ~4x E-weight). The default value 4.0 is
-    from the cortical balanced-network literature; callers should
-    override per experiment when perturbation-testing the balance.
+    of the smaller inhibitory population. The default value 8.0 is
+    silicritter-specific tuning adopted in D008 (Step 13's multi-seed
+    perturbation sweep found (i_fraction=0.2, i_mult=8.0) outperforms
+    the cortical-canonical (0.2, 4.0) by 6.5% open-loop and 11.6%
+    closed-loop). Callers should override per experiment when
+    perturbation-testing the balance.
 
     Contract: `spikes.shape[0]` must exceed every index in `pool.pre_ids`.
     When provided, `pre_is_inhibitory.shape[0]` must equal
@@ -164,7 +166,7 @@ def synaptic_current(
             (backward-compatible with step 2-8 behavior).
         i_weight_multiplier: per-synapse scaling applied to
             inhibitory-sourced contributions (in addition to sign
-            flip). Default 4.0 matches canonical cortical balance.
+            flip). Default 8.0 per D008 (silicritter-specific).
 
     Returns:
         Per-post synaptic current, shape (N_post,), float32.
