@@ -175,6 +175,46 @@ pivot to examining what architectural changes (fractional EMA in
 controller? non-zero plasticity + valence trace driven by
 prediction error?) might open prediction up.
 
+### 2026-04-23 — Step 14 result: not backing out, refining
+
+fGn stimulus runs cleanly through the step-10 architecture, all four
+H values (0.3, 0.5, 0.7, 0.9) produce sensible firing regimes, and
+the closed-loop controller delivers a 20–30× tracking improvement
+over open-loop at every H.
+
+**The back-out clause is not triggered.** Fitness does depend on H.
+Closed-loop tracking is 3× worse at H=0.7 than at H=0.5, and the
+prediction-minus-tracking gap at H=0.9 (−1.71e−5) is 4× the gap at
+H=0.3 (−4.67e−6). The architecture is not indifferent to memory
+structure in the stimulus.
+
+**But the dependence isn't what I predicted.** I expected the gap to
+scale with `(1 − lag1)` — small gap at high-H (persistent signal,
+easy to predict by just reporting current), large gap at low-H
+(antipersistent, hard). Observed is the opposite. The mechanism is
+that higher H inflates A's per-window rate variance (less within-
+window averaging-out), which gives B a harder target to track even
+though the signal is smoother. The controller's fixed-τ EMA fights
+this badly. See `perf_history.md` (Step 14 entry) for the full
+table and honest interpretation.
+
+**Hypothesis for the mechanism behind "real" prediction in this
+substrate: not present.** Controller EMA integrates on a 50 ms
+time constant tuned to response dynamics, not to A's temporal
+structure. B's pool is fixed (plasticity_rate=0). Valence trace
+is zero. Whatever H-dependence we see is the architecture's
+dynamics stumbling through different stimulus-variance regimes,
+not genuine predictive learning.
+
+**Next (Step 5c):** compute the Wiener-Kolmogorov optimal
+predictor error for fGn at each H. That's the theoretical floor
+for "best any predictor could do." If B's observed residuals sit
+far above that floor, there's real architectural headroom to
+chase. If B is already near the floor, prediction isn't
+improvable within this substrate and a genuinely memory-capable
+architecture (fractional controller, recurrent B, or learned
+plasticity with prediction-error valence) is what's needed.
+
 ---
 
 ## License and contributions

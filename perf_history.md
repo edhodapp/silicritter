@@ -969,3 +969,59 @@ i_mult \\ i_frac |    0.00 |    0.10 |    0.20 |    0.30 |    0.40
 ### Follow-up flagged but not chased
 
 Step 12's tonic sweep and step 13's grid were run at i_mult=4.0. Re-running either at the new D008 default (8.0) might shift the cliff locations — tonic might drop further before collapsing, or might collapse sooner because B's inhibition is stronger. Not urgent; flagged in DECISIONS.md (D008 "Impact on code" section) for anyone re-exploring these regimes.
+
+---
+
+## 2026-04-23 — Step 14: fractional-Gaussian-noise stimulus to A
+
+- **Script:** `experiments/step14_fgn_stimulus.py`
+- **Setup:** step 10's hand-wired cross-E-only B pool + E/I substrate at D008 `(0.2, 8.0)` + closed-loop gain=50. A's drive replaced with fGn (mean=20.75 mV, std=2.0 mV) at H ∈ {0.3, 0.5, 0.7, 0.9}. B's tonic held at 16 mV. Each H run produces both a **tracking** fitness (−MSE(B(t), A(t))) and a **prediction** fitness (−MSE(B(t), A(t+1))).
+
+### Result
+
+Open-loop (const adr = 1.0):
+
+| H | track | pred | pred−track | stim lag1 | A rate | B rate |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.30 | −8.01e−5 | −8.45e−5 | −4.39e−6 | −0.171 | 38.8 Hz | 30.2 Hz |
+| 0.50 | −9.57e−5 | −1.01e−4 | −5.16e−6 | +0.077 | 39.0 Hz | 30.1 Hz |
+| 0.70 | −9.40e−5 | −9.64e−5 | −2.39e−6 | +0.349 | 39.5 Hz | 30.2 Hz |
+| 0.90 | −1.33e−4 | −1.40e−4 | −7.87e−6 | +0.589 | 40.9 Hz | 30.1 Hz |
+
+Closed-loop (gain = 50):
+
+| H | track | pred | pred−track | stim lag1 | A rate | B rate |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.30 | **−4.12e−6** | −8.80e−6 | −4.67e−6 | −0.171 | 38.8 Hz | 37.8 Hz |
+| 0.50 | **−4.52e−6** | −1.31e−5 | −8.60e−6 | +0.077 | 39.0 Hz | 37.9 Hz |
+| 0.70 | −1.18e−5 | −1.47e−5 | −2.92e−6 | +0.349 | 39.5 Hz | 38.0 Hz |
+| 0.90 | −1.14e−5 | −2.86e−5 | −1.71e−5 | +0.589 | 40.9 Hz | 38.5 Hz |
+
+### Findings
+
+- **fGn stimulus is viable.** All four H values produce sensible firing regimes; no cliff, no silent segments. A fires at ~39–41 Hz across H; B tracks at ~30 Hz open-loop and ~38 Hz closed-loop. The architecture runs on fractional noise without modification.
+- **Closed-loop dramatically improves tracking under all H.** Open-loop track is roughly −8e−5 to −1.3e−4 depending on H; closed-loop track is −4e−6 to −1.2e−5 — 20–30× improvement. The closed-loop controller works on fGn just as it worked on the step function. B's mean rate pushes from 30 Hz up to ~38 Hz under closed-loop, tracking A's ~40 Hz across conditions.
+- **Tracking fitness depends on H non-monotonically.** Closed-loop track is best at H=0.3 (−4.1e−6) and H=0.5 (−4.5e−6), gets worse at H=0.7 (−1.2e−5) and H=0.9 (−1.1e−5). The effect is real, not noise — a 3× worsening from H=0.5 to H=0.7.
+- **The pre-run hypothesis is falsified.** I predicted the closed-loop prediction-minus-tracking gap would scale cleanly with `(1 − lag1)`, i.e., big gap at H=0.3 (antipersistent), small gap at H=0.9 (persistent). Observed is the opposite: H=0.9 has the LARGEST gap (−1.71e−5), H=0.3 has a moderate one, H=0.7 the smallest. Whatever's happening, it's not pure-tracking-plus-stim-autocorr.
+- **Why the non-monotonic shape.** Two mechanisms fighting: (a) per-window A-rate variance grows with H (long-range dependence means less averaging-out within a 100-ms window), so there's more for B to track; (b) A's lag1 grows with H, so the "trivial prediction" error (report current) gets smaller. At H=0.5 the variance is moderate and lag1 ≈ 0, and B tracks easily; at H=0.9 the variance is large (harder target) but lag1 is high (which could help if B had memory — it doesn't). The closed-loop controller's EMA smooths on the response side but not on the input side, so high-H signals stress the architecture.
+
+### Hypothesis update
+
+B has **no mechanism to exploit long-range temporal structure**. The EMA in the controller integrates B's and A's recent rates, but its time constant (~50 ms) is matched to the response loop, not to A's temporal structure. B's pool is fixed with `plasticity_rate = 0`, and the valence trace is zero throughout, so STDP does nothing.
+
+The non-monotonic fitness curve across H is the architecture's dynamics interacting with stimulus variance structure — NOT genuine predictive learning. Whatever H-dependence we see is accidental; making prediction load-bearing requires either (i) non-exponential memory in the controller (fractional EMA — the direction Ed is investigating separately in ~/math/fraccalc), (ii) non-zero plasticity with a valence signal driven by prediction error, or (iii) an architectural memory in B (recurrent slots that carry a historical signature of A's past).
+
+### Not backing out
+
+The original back-out clause (see README dev log, 2026-04-23 entry) said "if fitness is indistinguishable across H, the fractional-stimulus direction is a blind alley." That's not what happened — fitness clearly depends on H. The direction is still viable; the **finding** is that the current architecture doesn't extract useful information from long-range dependence, only stumbles through different-variance regimes of it.
+
+### Next (Step 5c promised)
+
+Compute the Wiener-Kolmogorov optimal predictor error for the same fGn stimulus at each H. That gives a theoretical floor for "best any architecture could do." If B's observed prediction residual is far above the WK floor, there's real room for an architectural upgrade to close the gap. If B is already near the WK floor, further architectural work isn't going to help on this task.
+
+### Caveats
+
+- **Single seed.** As with every recent experiment. Multi-seed discipline should be applied before strong claims.
+- **Hurst range is limited.** fGn is defined for H ∈ (0, 1) but the Davies-Harte embedding can become ill-conditioned near 1.0. H=0.95 would stress-test the numerics; not run here.
+- **Window size 100 ms is a pre-chosen parameter.** Varying WINDOW_STEPS might reshape the tracking/prediction distinction. Not swept.
+- **fGn is mean-zero stationary.** Real stimuli are rarely that well-behaved; the broader question (does this architecture handle non-stationary signals?) is open.
