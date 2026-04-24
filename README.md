@@ -110,10 +110,70 @@ Run tests:
 
 ## Project documentation
 
-- **`DECISIONS.md`** — architectural decision log. Immutable entries, D001 (project name) through D006 (sim-first phased-build methodology). Supersession annotations on deprecated entries. Read this for the history of why the project looks the way it does.
+- **`DECISIONS.md`** — architectural decision log. Immutable entries with supersession annotations on deprecated entries. Read this for the history of why the project looks the way it does.
 - **`CLAUDE.md`** — project-local instructions for Claude Code sessions.
 - **`perf_history.md`** — durable performance log. One entry per significant experiment run, with measured numbers and honest commentary on what was and wasn't demonstrated.
 - **`SESSION-HANDOFF.md`** — origin context from the 2026-04-21 session that spawned this project.
+- **Dev log (below)** — chronological narrative of what was explored and why, including blind alleys that got backed out. Lighter-weight than `DECISIONS.md` (no immutability constraint) and broader than `perf_history.md` (no performance-measurement focus). Read this for the research arc.
+
+---
+
+## Dev log
+
+Append-forward narrative of exploration. Each entry is dated and
+describes what was tried, what was learned, and the direction it
+pushed the project. Unlike `DECISIONS.md` this is not immutable —
+but entries are not retconned either; if something turns out wrong,
+a later entry says so rather than editing the earlier one.
+
+### 2026-04-23 — Fractional-noise stimulus direction
+
+Motivated by Ed's parallel `~/math/fraccalc` exploration, pivoting
+the "Step 5: prediction task" work toward stimulus models with
+learnable temporal structure driven by fractional Gaussian noise.
+
+**Why this direction:** the current `A_DRIVE_PROFILE` (four flat
+levels held for 500 ms each) is predictable only at segment
+transitions, and even then B has no history-based information to
+exploit. Calling the existing MSE fitness a "prediction" metric
+is honest only by the index offset; mechanically the task is
+tracking with lag. To make prediction substantive, A's drive needs
+temporal structure B can learn from — the simplest principled
+choice is a stochastic process with tunable memory length.
+
+**fGn specifically because:** the Hurst parameter H controls the
+decay of the autocovariance kernel from white noise (H=0.5,
+memoryless) to strong long-range dependence (H near 1, heavy-tailed
+memory). The optimal predictor for fGn has a known closed-form
+floor, giving us a theoretical target rather than just relative
+baselines. And it connects cleanly to memory-kernel-style analysis
+that Ed is working through independently in fraccalc, so stimulus
+work and math work can inform each other.
+
+**Landed:** `src/silicritter/fracnoise.py` — Davies-Harte FFT
+synthesis of unit-variance fGn, O(N log N). `fgn_davies_harte(n,
+hurst, rng)` returns a sample path; `fgn_drive_trace(T, N, H, mean,
+std, rng)` builds a drive trace shaped (T, N) for use as
+`i_ext_a`. 8 tests at 100% branch coverage, empirically verified
+that autocorrelations match theoretical values at H=0.3, 0.5, 0.7.
+
+**Next:** Step 14 experiment — swap `A_DRIVE_PROFILE` for an fGn
+drive trace at a few Hurst values, rerun the step 10 closed-loop
+architecture, measure how fitness changes as H sweeps across the
+memory-length range. Comparison is against the step-function
+baseline (−5.6e−5 closed-loop on the static ceiling) and
+eventually against the Wiener-Kolmogorov optimal predictor floor
+for the same stimulus.
+
+**Backing-out clause:** this is exploratory. If Step 14 shows that
+the current architecture doesn't distinguish between H=0.5
+(white-noise, unpredictable) and H=0.7 (persistent, predictable) —
+i.e., B's fitness is indistinguishable across H — then B has no
+capacity to exploit memory structure, and the fractional-noise
+direction is a blind alley for *this* architecture. Would then
+pivot to examining what architectural changes (fractional EMA in
+controller? non-zero plasticity + valence trace driven by
+prediction error?) might open prediction up.
 
 ---
 
