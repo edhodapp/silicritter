@@ -2436,3 +2436,6 @@
 [2026-04-24T10:28:25+00:00] [block8] 98/100 stdp_only_n200000 seed=17: delta=+6.48e-05 (12.3s)
 [2026-04-24T10:28:39+00:00] [block8] 99/100 stdp_only_n200000 seed=18: delta=+6.01e-05 (13.1s)
 [2026-04-24T10:28:53+00:00] [block8] 100/100 stdp_only_n200000 seed=19: delta=+6.17e-05 (12.6s)
+[2026-04-24T10:28:55+00:00] [commit] block8_stdp_regression_bisect committed and pushed
+[2026-04-24T10:28:55+00:00] [batch] === block8_stdp_regression_bisect end (19.3 min) ===
+[2026-04-24T10:28:55+00:00] [batch] ALL BLOCKS COMPLETE: 0.83 hours
