@@ -492,3 +492,52 @@
 [2026-04-24T07:27:46+00:00] [block1] 488/490 valence_inverted_hebbian_iv1.8_thr0.20_dur1000 seed=2: -2.716e-04 -> -2.326e-04 (delta +3.90e-05, 5.2s)
 [2026-04-24T07:27:52+00:00] [block1] 489/490 valence_inverted_hebbian_iv1.8_thr0.20_dur1000 seed=3: -2.792e-04 -> -2.404e-04 (delta +3.87e-05, 5.1s)
 [2026-04-24T07:27:58+00:00] [block1] 490/490 valence_inverted_hebbian_iv1.8_thr0.20_dur1000 seed=4: -2.665e-04 -> -2.290e-04 (delta +3.75e-05, 5.3s)
+[2026-04-24T07:28:00+00:00] [commit] block1_step17_factorial committed and pushed
+[2026-04-24T07:28:00+00:00] [batch] === block1_step17_factorial end (65.9 min) ===
+[2026-04-24T07:28:00+00:00] [batch] === block2_acquisition_probability begin ===
+[2026-04-24T07:28:00+00:00] [block2] acq-prob sweep: 9 probs x 5 seeds = 45 runs
+[2026-04-24T07:28:05+00:00] [block2] 1/45 p=1e-05 seed=0: delta=+3.88e-05, cross_e=40.83%
+[2026-04-24T07:28:10+00:00] [block2] 2/45 p=1e-05 seed=1: delta=+4.22e-05, cross_e=40.11%
+[2026-04-24T07:28:15+00:00] [block2] 3/45 p=1e-05 seed=2: delta=+4.50e-05, cross_e=39.53%
+[2026-04-24T07:28:21+00:00] [block2] 4/45 p=1e-05 seed=3: delta=+3.99e-05, cross_e=39.67%
+[2026-04-24T07:28:26+00:00] [block2] 5/45 p=1e-05 seed=4: delta=+4.42e-05, cross_e=40.72%
+[2026-04-24T07:28:31+00:00] [block2] 6/45 p=3e-05 seed=0: delta=+4.09e-05, cross_e=40.84%
+[2026-04-24T07:28:36+00:00] [block2] 7/45 p=3e-05 seed=1: delta=+4.37e-05, cross_e=40.08%
+[2026-04-24T07:28:42+00:00] [block2] 8/45 p=3e-05 seed=2: delta=+4.29e-05, cross_e=39.43%
+[2026-04-24T07:28:47+00:00] [block2] 9/45 p=3e-05 seed=3: delta=+3.87e-05, cross_e=39.61%
+[2026-04-24T07:28:52+00:00] [block2] 10/45 p=3e-05 seed=4: delta=+4.47e-05, cross_e=40.67%
+[2026-04-24T07:28:57+00:00] [block2] 11/45 p=1e-04 seed=0: delta=+4.02e-05, cross_e=40.82%
+[2026-04-24T07:29:02+00:00] [block2] 12/45 p=1e-04 seed=1: delta=+4.13e-05, cross_e=40.01%
+[2026-04-24T07:29:07+00:00] [block2] 13/45 p=1e-04 seed=2: delta=+4.45e-05, cross_e=39.44%
+[2026-04-24T07:29:13+00:00] [block2] 14/45 p=1e-04 seed=3: delta=+4.10e-05, cross_e=39.59%
+[2026-04-24T07:29:18+00:00] [block2] 15/45 p=1e-04 seed=4: delta=+4.51e-05, cross_e=40.48%
+[2026-04-24T07:29:23+00:00] [block2] 16/45 p=3e-04 seed=0: delta=+3.53e-05, cross_e=40.58%
+[2026-04-24T07:29:28+00:00] [block2] 17/45 p=3e-04 seed=1: delta=+3.90e-05, cross_e=39.76%
+[2026-04-24T07:29:33+00:00] [block2] 18/45 p=3e-04 seed=2: delta=+4.54e-05, cross_e=39.20%
+[2026-04-24T07:29:39+00:00] [block2] 19/45 p=3e-04 seed=3: delta=+4.15e-05, cross_e=39.42%
+[2026-04-24T07:29:44+00:00] [block2] 20/45 p=3e-04 seed=4: delta=+4.43e-05, cross_e=40.36%
+[2026-04-24T07:29:49+00:00] [block2] 21/45 p=1e-03 seed=0: delta=+3.53e-05, cross_e=40.64%
+[2026-04-24T07:29:54+00:00] [block2] 22/45 p=1e-03 seed=1: delta=+4.32e-05, cross_e=39.76%
+[2026-04-24T07:30:00+00:00] [block2] 23/45 p=1e-03 seed=2: delta=+4.44e-05, cross_e=39.18%
+[2026-04-24T07:30:05+00:00] [block2] 24/45 p=1e-03 seed=3: delta=+4.02e-05, cross_e=39.47%
+[2026-04-24T07:30:10+00:00] [block2] 25/45 p=1e-03 seed=4: delta=+4.56e-05, cross_e=40.33%
+[2026-04-24T07:30:15+00:00] [block2] 26/45 p=3e-03 seed=0: delta=+3.49e-05, cross_e=40.59%
+[2026-04-24T07:30:21+00:00] [block2] 27/45 p=3e-03 seed=1: delta=+3.95e-05, cross_e=39.70%
+[2026-04-24T07:30:26+00:00] [block2] 28/45 p=3e-03 seed=2: delta=+4.30e-05, cross_e=39.27%
+[2026-04-24T07:30:31+00:00] [block2] 29/45 p=3e-03 seed=3: delta=+4.36e-05, cross_e=39.43%
+[2026-04-24T07:30:36+00:00] [block2] 30/45 p=3e-03 seed=4: delta=+4.42e-05, cross_e=40.15%
+[2026-04-24T07:30:41+00:00] [block2] 31/45 p=1e-02 seed=0: delta=+3.65e-05, cross_e=40.60%
+[2026-04-24T07:30:47+00:00] [block2] 32/45 p=1e-02 seed=1: delta=+4.08e-05, cross_e=39.79%
+[2026-04-24T07:30:52+00:00] [block2] 33/45 p=1e-02 seed=2: delta=+4.74e-05, cross_e=39.22%
+[2026-04-24T07:30:57+00:00] [block2] 34/45 p=1e-02 seed=3: delta=+4.29e-05, cross_e=39.45%
+[2026-04-24T07:31:03+00:00] [block2] 35/45 p=1e-02 seed=4: delta=+4.26e-05, cross_e=40.45%
+[2026-04-24T07:31:08+00:00] [block2] 36/45 p=3e-02 seed=0: delta=+3.59e-05, cross_e=40.62%
+[2026-04-24T07:31:13+00:00] [block2] 37/45 p=3e-02 seed=1: delta=+4.30e-05, cross_e=39.70%
+[2026-04-24T07:31:18+00:00] [block2] 38/45 p=3e-02 seed=2: delta=+4.40e-05, cross_e=39.18%
+[2026-04-24T07:31:24+00:00] [block2] 39/45 p=3e-02 seed=3: delta=+4.23e-05, cross_e=39.59%
+[2026-04-24T07:31:29+00:00] [block2] 40/45 p=3e-02 seed=4: delta=+4.36e-05, cross_e=40.23%
+[2026-04-24T07:31:34+00:00] [block2] 41/45 p=1e-01 seed=0: delta=+3.12e-05, cross_e=40.60%
+[2026-04-24T07:31:39+00:00] [block2] 42/45 p=1e-01 seed=1: delta=+4.20e-05, cross_e=39.78%
+[2026-04-24T07:31:45+00:00] [block2] 43/45 p=1e-01 seed=2: delta=+4.45e-05, cross_e=39.17%
+[2026-04-24T07:31:50+00:00] [block2] 44/45 p=1e-01 seed=3: delta=+4.35e-05, cross_e=39.58%
+[2026-04-24T07:31:55+00:00] [block2] 45/45 p=1e-01 seed=4: delta=+4.49e-05, cross_e=40.42%
