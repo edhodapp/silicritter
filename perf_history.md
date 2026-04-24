@@ -1025,3 +1025,55 @@ Compute the Wiener-Kolmogorov optimal predictor error for the same fGn stimulus 
 - **Hurst range is limited.** fGn is defined for H ∈ (0, 1) but the Davies-Harte embedding can become ill-conditioned near 1.0. H=0.95 would stress-test the numerics; not run here.
 - **Window size 100 ms is a pre-chosen parameter.** Varying WINDOW_STEPS might reshape the tracking/prediction distinction. Not swept.
 - **fGn is mean-zero stationary.** Real stimuli are rarely that well-behaved; the broader question (does this architecture handle non-stationary signals?) is open.
+
+---
+
+## 2026-04-23 — Step 15: Wiener-Kolmogorov floor vs. observed prediction error
+
+- **Script:** `experiments/step15_wk_floor_comparison.py`
+- **New library:** `src/silicritter/wk.py` (Durbin-Levinson recursion, windowed-fGn autocovariance, WK floor) with `tests/test_wk.py` (37 tests across 5 independent cross-check paths, 100% branch coverage). See the test-design discussion in the session log for the rationale.
+- **What's compared:** For each Hurst value, the step 14 architecture is run to produce A's per-window rate trace; the empirical autocovariance of that trace is computed; Durbin-Levinson gives the theoretical one-step prediction MSE achievable by any linear predictor with access to A's history. That's compared to B's observed prediction MSE from the same run.
+
+### Result
+
+Open-loop (const adr=1.0):
+
+| H | A window var | WK floor | B pred MSE | B / floor |
+|---:|---:|---:|---:|---:|
+| 0.30 | 4.85e−6 | 4.40e−6 | 8.45e−5 | 19.19 |
+| 0.50 | 6.19e−6 | 5.62e−6 | 1.01e−4 | 17.96 |
+| 0.70 | 7.60e−6 | 6.39e−6 | 9.64e−5 | 15.08 |
+| 0.90 | 1.66e−5 | 1.12e−5 | 1.40e−4 | 12.57 |
+
+Closed-loop (gain=50):
+
+| H | A window var | WK floor | B pred MSE | B / floor |
+|---:|---:|---:|---:|---:|
+| 0.30 | 5.13e−6 | 4.63e−6 | 8.80e−6 | **1.90** |
+| 0.50 | 6.30e−6 | 5.69e−6 | 1.31e−5 | **2.31** |
+| 0.70 | 7.64e−6 | 6.52e−6 | 1.47e−5 | **2.25** |
+| 0.90 | 1.72e−5 | 1.18e−5 | 2.86e−5 | **2.43** |
+
+### Findings
+
+- **Closed-loop B is 1.9–2.4× above the WK floor at every H.** This is strikingly close to optimal for an architecture with **zero explicit memory**. B has no recurrent state, `plasticity_rate = 0`, and the controller's EMA has a 50-ms time constant. Whatever implicit "prediction" is happening is doing most of the job the theoretical-best linear predictor would do.
+- **Open-loop is 12–19× above the floor.** The controller matters a lot here. Without gain modulation, B is barely tracking, let alone predicting.
+- **The WK floor is NOT much smaller than A's window variance.** Ratio floor/variance is 0.88–0.91 across H, meaning the theoretical best linear predictor reduces prediction MSE by only 9–12% below "just report the mean." The 2.4× gap between B and the floor (at H=0.9, closed-loop) is thus ~2× the *absolute* reducible error, not ~2× the whole prediction error.
+- **Step 14's "gap grows with H" finding is preserved in the WK-floor-normalized view.** The B/floor ratio is slightly smaller at H=0.3 (1.90) than at H=0.9 (2.43). That is, B gets slightly *closer* to optimal when the signal is antipersistent. This makes mechanistic sense: antipersistent signals are easy to track (each window tends to undo the previous deviation), so B's lag hurts less.
+
+### Interpretation for the fractional-stimulus direction
+
+**The "does memory help" back-out condition is clarified, and the answer leans toward "probably not much."**
+
+The upper bound on improvement from adding memory to B is 2.4× reduction in prediction MSE (the floor is 2.4× below current B at H=0.9, closed-loop). And that upper bound assumes the memory-capable architecture reaches the information-theoretic floor exactly — real architectures would fall short.
+
+A reasonable expectation: memory upgrades (fractional EMA in controller, recurrent B, or learned plasticity with prediction-error valence) might close half the gap, so maybe 1.5× improvement. That's not nothing, but it's also not the 10× improvement the step 14 numbers had me imagining when I didn't know the floor.
+
+**This doesn't mean the direction is dead; it means the scientific framing shifts.** The interesting question isn't "can we close the gap to WK floor" (answer: maybe ~1.5–2×, with effort). The interesting question is "what happens when we relax the task to require actual memory" — e.g., non-stationary A, A with structural change-points, longer prediction horizons. The fGn-stationary task is a well-defined benchmark that happens to already have very little memory headroom available.
+
+### Caveats
+
+- **Single seed.** As with every recent experiment.
+- **Empirical autocov estimation has sampling error**, especially at high lags. At n_windows=20, only ~19 samples of lag-1 autocov; variance on the estimate is substantial. Using longer simulations (N_TIMESTEPS=10000 → 100 windows) would tighten the floor estimate.
+- **max_lag=10 (half of n_windows).** DL-based floor converges as max_lag grows; using the full history minus 1 might push the floor slightly lower.
+- **Empirical autocov is a biased estimator.** The N-normalized (rather than (N-k)-normalized) form is consistent but biased low at high lags; the floor might be slightly underestimated as a result. For a precise measurement, the unbiased form should be used — but the 2× gap is bigger than that bias.

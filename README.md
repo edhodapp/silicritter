@@ -215,6 +215,60 @@ improvable within this substrate and a genuinely memory-capable
 architecture (fractional controller, recurrent B, or learned
 plasticity with prediction-error valence) is what's needed.
 
+### 2026-04-23 — Step 15 result: architecture is 2× above the floor
+
+Computed the Wiener-Kolmogorov floor empirically for each (H,
+condition) in step 14 via a new `src/silicritter/wk.py` module
+(Durbin-Levinson + windowed-fGn autocovariance; 37 tests across
+5 independent cross-check paths including Monte Carlo agreement
+between the Davies-Harte synthesizer and the theoretical
+windowed autocov).
+
+Finding: **closed-loop B sits at 1.9–2.4× above the WK floor at
+every H.** For an architecture with no explicit memory (no
+recurrent state, no plasticity, controller EMA only 50 ms long),
+this is surprisingly close to the theoretical best linear
+predictor. Open-loop is 12–19× above — the controller's implicit
+smoothing is doing most of the predictive work.
+
+**Re-reading of the step 14 result:** the gap I was chasing is
+smaller than I'd framed it. The WK floor is only 9–12% below
+A's window variance — the *absolute* room for prediction-based
+improvement is small to begin with, because stationary fGn at
+these H values isn't *that* predictable. Of that small room, B
+is already capturing roughly half.
+
+**Where this leaves the fractional-stimulus direction:** the
+"memory upgrade will close a big gap" pitch is weak. Best-case
+memory-capable architecture might close half the remaining gap,
+so maybe a 1.5× improvement in prediction MSE. That's bounded
+enough that architecture upgrades are probably not the biggest
+lever.
+
+**What IS worth pursuing** (if Ed wants to continue the
+stimulus-centered direction):
+  1. *Non-stationary A*: fGn with abrupt parameter changes, or
+     a drifting mean. Much more memory-demanding. The WK floor
+     for non-stationary signals is different (and usually much
+     lower for an architecture that can detect the drift).
+  2. *Longer prediction horizons*: predict A(t+k) for k > 1. As
+     k grows, the EMA's implicit memory becomes insufficient
+     and real architectural memory would dominate.
+  3. *Multi-stimulus*: two or more concurrent fGn streams that
+     B has to attend to selectively. Memory + gating load.
+  4. *Drop the prediction framing entirely* and go back to
+     tasks the substrate is built for (spike-timing-dependent
+     learning, structural growth).
+
+The back-out clause from the original entry is partially
+triggered: fractional stimulus didn't fall flat, but the
+scientifically load-bearing question it was supposed to
+illuminate ("does memory help?") came back with a small answer.
+Not wasted work — the WK floor machinery stays in the library,
+and the diagnosis of "controller EMA is the implicit predictor"
+is a real finding. But the direction doesn't automatically
+continue.
+
 ---
 
 ## License and contributions

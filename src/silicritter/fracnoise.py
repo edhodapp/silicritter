@@ -33,8 +33,11 @@ import jax
 import jax.numpy as jnp
 
 
-def _fgn_autocov(n: int, hurst: float) -> jax.Array:
-    """fGn autocovariance r(k) for k = 0..n-1, unit variance."""
+def fgn_autocov(n: int, hurst: float) -> jax.Array:
+    """fGn autocovariance r(k) for k = 0..n-1, unit variance.
+
+    r(k) = 0.5 * (|k+1|^(2H) - 2|k|^(2H) + |k-1|^(2H)) with r(0) = 1.
+    """
     k = jnp.arange(n, dtype=jnp.float32)
     h2 = 2.0 * hurst
     return 0.5 * (
@@ -60,7 +63,7 @@ def fgn_davies_harte(
     Returns:
         float32 array of shape (n,), mean ~0, variance ~1.
     """
-    r = _fgn_autocov(n, hurst)
+    r = fgn_autocov(n, hurst)
     zero = jnp.zeros((1,), dtype=jnp.float32)
     c = jnp.concatenate([r, zero, r[1:][::-1]])  # length 2n
     m = 2 * n
