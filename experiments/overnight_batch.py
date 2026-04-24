@@ -569,6 +569,218 @@ def block5_best_config_confirm(seeds: tuple[int, ...]) -> None:
 
 
 # ----------------------------------------------------------------------
+# Block 6: Structural-vs-baseline at strong STDP operating point
+# ----------------------------------------------------------------------
+#
+# Block 4 showed step-16 STDP-only is much stronger at rate=3.0,
+# init_v_mean=1.8 than at the default rate=1.0, ivm=1.0 used in
+# blocks 1/2/5. Here we re-run the structural-vs-baseline comparison
+# at the strong operating point to see whether structural plasticity
+# adds anything once STDP is set up well.
+
+
+def _strong_op_run(
+    cfg_name: str,
+    acq_mode: str,
+    pre_id_source: str,
+    seed: int,
+) -> dict[str, float]:
+    """Run step 17 with PLASTICITY_RATE=3.0 and INIT_V_MEAN=1.8."""
+    # pylint: disable=import-outside-toplevel,protected-access
+    import step17_structural_growth as s17
+    orig_rate = s17.PLASTICITY_RATE
+    orig_ivm = s17.INIT_V_MEAN
+    s17.PLASTICITY_RATE = 3.0
+    s17.INIT_V_MEAN = 1.8
+    try:
+        config = Step17Config(
+            cfg_name, acq_mode, pre_id_source,
+            0.2, 0.05, 500,
+        )
+        return s17._run_config(config, seed)
+    finally:
+        s17.PLASTICITY_RATE = orig_rate
+        s17.INIT_V_MEAN = orig_ivm
+
+
+def block6_strong_op_confirm(seeds: tuple[int, ...]) -> None:
+    csv_path = RESULTS_DIR / "block6_strong_op_confirm.csv"
+    done = _load_completed(csv_path)
+    configs = (
+        ("strong_baseline_stdp_only", "off", "uniform"),
+        ("strong_stochastic_uniform", "stochastic", "uniform"),
+        ("strong_stochastic_hebbian", "stochastic", "hebbian"),
+    )
+    total = len(configs) * len(seeds)
+    log(
+        f"[block6] strong-op confirm (rate=3.0, ivm=1.8): "
+        f"{len(configs)} configs x {len(seeds)} seeds = {total} runs"
+    )
+    idx = 0
+    for cfg_name, acq_mode, pre_src in configs:
+        for seed in seeds:
+            idx += 1
+            key = (cfg_name, seed)
+            if key in done:
+                log(f"[block6] skip {idx}/{total} {cfg_name} seed={seed}")
+                continue
+            try:
+                t0 = time.perf_counter()
+                metrics = _strong_op_run(cfg_name, acq_mode, pre_src, seed)
+                dt_run = time.perf_counter() - t0
+                row = {
+                    "block": "strong_op_confirm",
+                    "config": cfg_name,
+                    "seed": seed,
+                    "plasticity_rate": 3.0,
+                    "init_v_mean": 1.8,
+                    "acq_mode": acq_mode,
+                    "pre_id_source": pre_src,
+                    "fit_before": metrics["fit_before"],
+                    "fit_after": metrics["fit_after"],
+                    "delta": metrics["fit_after"] - metrics["fit_before"],
+                    "v_mean": metrics["v_mean"],
+                    "active_frac_end": metrics["active_frac_end"],
+                    "cross_e_frac_end": metrics["cross_e_frac_end"],
+                    "wall_sec": dt_run,
+                }
+                _append_row(csv_path, row)
+                delta = metrics["fit_after"] - metrics["fit_before"]
+                log(
+                    f"[block6] {idx}/{total} {cfg_name} "
+                    f"seed={seed}: delta={delta:+.2e} ({dt_run:.1f}s)"
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                log(
+                    f"[block6] ERROR {cfg_name} seed={seed}: {exc!r}\n"
+                    f"{traceback.format_exc()}"
+                )
+            gc.collect()
+    _git_commit_results("block6_strong_op_confirm")
+
+
+# ----------------------------------------------------------------------
+# Block 7: Extended-duration structural confirm (500k, 20 seeds)
+# ----------------------------------------------------------------------
+#
+# Block 3 (N=5) hinted that structural pulls ahead of STDP-only at
+# 500k steps (+1.01e-04 vs +7.96e-05). Confirm with N=20.
+# 1M steps was attempted but OOMs the GPU during the scan.
+
+
+def block7_long_duration_confirm(seeds: tuple[int, ...]) -> None:
+    csv_path = RESULTS_DIR / "block7_long_duration_confirm.csv"
+    done = _load_completed(csv_path)
+    durations = (500_000,)
+    conditions = (("structural", True), ("stdp_only", False))
+    total = len(durations) * len(conditions) * len(seeds)
+    log(
+        f"[block7] long-duration confirm: "
+        f"{len(durations)} durations x {len(conditions)} conds x "
+        f"{len(seeds)} seeds = {total} runs"
+    )
+    idx = 0
+    for n_train, (cond_name, with_struct) in itertools.product(
+        durations, conditions,
+    ):
+        config_name = f"{cond_name}_n{n_train}"
+        for seed in seeds:
+            idx += 1
+            key = (config_name, seed)
+            if key in done:
+                log(f"[block7] skip {idx}/{total} {config_name} seed={seed}")
+                continue
+            try:
+                t0 = time.perf_counter()
+                metrics = _long_training_run(n_train, with_struct, seed)
+                dt_run = time.perf_counter() - t0
+                row = {
+                    "block": "long_duration_confirm",
+                    "config": config_name,
+                    "seed": seed,
+                    "n_train_steps": n_train,
+                    "condition": cond_name,
+                    "fit_before": metrics["fit_before"],
+                    "fit_after": metrics["fit_after"],
+                    "delta": metrics["fit_after"] - metrics["fit_before"],
+                    "v_mean": metrics["v_mean"],
+                    "cross_e_frac_end": metrics["cross_e_frac_end"],
+                    "wall_sec": dt_run,
+                }
+                _append_row(csv_path, row)
+                delta = metrics["fit_after"] - metrics["fit_before"]
+                log(
+                    f"[block7] {idx}/{total} {config_name} "
+                    f"seed={seed}: delta={delta:+.2e} ({dt_run:.1f}s)"
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                log(
+                    f"[block7] ERROR {config_name} seed={seed}: {exc!r}\n"
+                    f"{traceback.format_exc()}"
+                )
+            gc.collect()
+    _git_commit_results("block7_long_duration_confirm")
+
+
+# ----------------------------------------------------------------------
+# Block 8: STDP-only regression bisection between 100k and 200k steps
+# ----------------------------------------------------------------------
+#
+# Block 3 (N=5) showed stdp_only delta peaking ~100k (+9.66e-05) and
+# regressing at 200k (+7.77e-05). Bisect 100k-200k at 25k resolution
+# with 20 seeds to localize the turn.
+
+
+def block8_stdp_regression_bisect(seeds: tuple[int, ...]) -> None:
+    csv_path = RESULTS_DIR / "block8_stdp_regression_bisect.csv"
+    done = _load_completed(csv_path)
+    durations = (100_000, 125_000, 150_000, 175_000, 200_000)
+    total = len(durations) * len(seeds)
+    log(
+        f"[block8] stdp regression bisect: "
+        f"{len(durations)} durations x {len(seeds)} seeds = {total} runs"
+    )
+    idx = 0
+    for n_train in durations:
+        config_name = f"stdp_only_n{n_train}"
+        for seed in seeds:
+            idx += 1
+            key = (config_name, seed)
+            if key in done:
+                log(f"[block8] skip {idx}/{total} {config_name} seed={seed}")
+                continue
+            try:
+                t0 = time.perf_counter()
+                metrics = _long_training_run(n_train, False, seed)
+                dt_run = time.perf_counter() - t0
+                row = {
+                    "block": "stdp_regression_bisect",
+                    "config": config_name,
+                    "seed": seed,
+                    "n_train_steps": n_train,
+                    "fit_before": metrics["fit_before"],
+                    "fit_after": metrics["fit_after"],
+                    "delta": metrics["fit_after"] - metrics["fit_before"],
+                    "v_mean": metrics["v_mean"],
+                    "cross_e_frac_end": metrics["cross_e_frac_end"],
+                    "wall_sec": dt_run,
+                }
+                _append_row(csv_path, row)
+                delta = metrics["fit_after"] - metrics["fit_before"]
+                log(
+                    f"[block8] {idx}/{total} {config_name} "
+                    f"seed={seed}: delta={delta:+.2e} ({dt_run:.1f}s)"
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                log(
+                    f"[block8] ERROR {config_name} seed={seed}: {exc!r}\n"
+                    f"{traceback.format_exc()}"
+                )
+            gc.collect()
+    _git_commit_results("block8_stdp_regression_bisect")
+
+
+# ----------------------------------------------------------------------
 # Orchestration
 # ----------------------------------------------------------------------
 
@@ -587,6 +799,15 @@ BLOCKS: list[tuple[str, Callable[..., None], dict[str, Any]]] = [
         "seeds": (0, 1, 2, 3, 4),
     }),
     ("block5_best_config_confirm", block5_best_config_confirm, {
+        "seeds": tuple(range(20)),
+    }),
+    ("block6_strong_op_confirm", block6_strong_op_confirm, {
+        "seeds": tuple(range(20)),
+    }),
+    ("block7_long_duration_confirm", block7_long_duration_confirm, {
+        "seeds": tuple(range(20)),
+    }),
+    ("block8_stdp_regression_bisect", block8_stdp_regression_bisect, {
         "seeds": tuple(range(20)),
     }),
 ]
