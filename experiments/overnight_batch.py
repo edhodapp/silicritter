@@ -423,7 +423,7 @@ def _step16_once(
     pool_b0 = s16_random_b_pool(
         seed + 1, plasticity_rate, init_v_mean, init_v_std,
     )
-    fit_before = s16_measure_fitness(
+    fit_before, _, _ = s16_measure_fitness(
         pool_b0, a_is_inh, b_is_inh, S16_MEASURE_STEPS,
     )
     state0 = s16_build_state(pool_b0)
@@ -435,7 +435,7 @@ def _step16_once(
     jax.block_until_ready(final_state.b.pool.v)
     train_time = time.perf_counter() - t0
     trained_pool = final_state.b.pool
-    fit_after = s16_measure_fitness(
+    fit_after, _, _ = s16_measure_fitness(
         trained_pool, a_is_inh, b_is_inh, S16_MEASURE_STEPS,
     )
     stats = s16_describe_pool(trained_pool)
