@@ -30,33 +30,43 @@ Phases:
 
 ---
 
-## Present status (Phase 1, steps 1–5 complete)
+## Present status (Phase 1, steps 1–15 complete)
 
-What exists today is an idealised JAX simulation of a single plastic spiking network with one chemical-signal modulator beyond valence, driven by a direct-encoding genetic algorithm that evolves initial scaffolds. No chip, no circuit-level validation yet.
+What exists today is an idealised JAX simulation of a paired-agent plastic spiking substrate with E/I balance, a closed-loop adrenaline gain controller, CPPN indirect encoding, and a fractional-Gaussian-noise stimulus generator with a Wiener-Kolmogorov-floor cross-check. No chip, no circuit-level validation yet.
 
 ### Modules (`src/silicritter/`)
 
-- **`lif.py`** — Leaky integrate-and-fire neuron forward simulation. `init_state`, `integrate_and_spike`, `step` (dense-weight variant), `simulate`. Module-level invariant asserts on V_REST / V_THRESH / V_RESET and positive τ_m / dt. 100% branch coverage.
-- **`slotpool.py`** — Slot-pool synapse representation. `SlotPool` NamedTuple with per-slot `pre_ids`, `v`, `plasticity_rate`, and `active`; synaptic input computed via gather-and-sum over the pool. Effective dense-matrix view available for validation. Forward sim (`step`, `simulate`) byte-exactly matches the `lif.py` dense path at matched weights. 100% branch coverage.
-- **`plasticity.py`** — Three-factor STDP on the slot pool, with pre-decayed eligibility traces (Song/Miller/Abbott convention) and two modulators:
-  - `valence` — scalar, gates STDP sign and magnitude (dopamine-like phasic three-factor signal).
-  - `adrenaline` — scalar, multiplies `i_total` at the LIF integration step (norepinephrine-like gain modulation, Aston-Jones & Cohen 2005).
-
-  Weights clipped to `[v_min, v_max]`. Slot `plasticity_rate = 0` means innate / hardwired. 100% branch coverage.
-- **`ga.py`** — Direct-encoding genetic-algorithm primitives. `Genome` (three parallel arrays per individual), `random_genome`, `random_population`, `decode_to_pool`, `tournament_select` (with-replacement sampling, documented), `uniform_crossover` (with a Baldwin-interference caveat documented), `mutate` with bound preservation. 100% branch coverage.
+- **`lif.py`** — Leaky integrate-and-fire forward simulation. `init_state`, `integrate_and_spike`, `step` (dense-weight variant), `simulate`.
+- **`slotpool.py`** — Slot-pool synapse representation. `SlotPool` NamedTuple with per-slot `pre_ids`, `v`, `plasticity_rate`, `active`, and `release_counter`. `synaptic_current` supports an optional `pre_is_inhibitory` mask with `i_weight_multiplier` (default 8.0 per D008). `assign_ei_identity` returns a deterministic E/I mask.
+- **`plasticity.py`** — Three-factor STDP on the slot pool with pre-decayed eligibility traces (Song/Miller/Abbott). Modulators: `valence` (scalar, gates STDP sign/magnitude) and `adrenaline` (scalar, multiple gain mechanisms registered via `GAIN_MODULATORS`, with `tau_m_scale` as the current winner). `PlasticNetState` groups LIF + pool + traces.
+- **`structural.py`** — Slot-release primitives. `StructuralParams`, `apply_release`. Acquisition from free pool not yet implemented.
+- **`ga.py`** — Direct-encoding GA primitives. `Genome`, tournament selection, uniform crossover, bound-preserving mutation. Used as a reference; the CPPN indirect encoding is the current scaling path.
+- **`cppn.py`** — CPPN (Compositional Pattern-Producing Network) indirect encoding. `CPPNGenome` (two weight matrices), `decode_cppn_to_pool`, tournament/crossover/mutation in CPPN space. ~480× search-space reduction vs. direct encoding at N=256, K=32.
+- **`paired.py`** — Paired-agent substrate. `PairedState` wraps two `PlasticNetState`s with pre_ids indexing into a combined `[own, partner]` raster of length 2·n_neurons. `step_paired` runs both agents in two phases (LIF forward, then STDP update); `simulate_paired` scans the whole sim. E/I substrate is opt-in via `*_is_inhibitory` arguments.
+- **`closedloop.py`** — Leaky-integrator adrenaline controller. `ControllerState` (rate EMAs + current adrenaline), `ControllerParams` (decay, baseline, gain, clip range). `step_closedloop` / `simulate_closedloop` broadcast B's adrenaline from an error signal `rate_a_ema − rate_b_ema` via `tau_m_scale`. Aston-Jones & Cohen 2005 adaptive-gain cast as a control loop.
+- **`fracnoise.py`** — Fractional Gaussian noise stimulus generator. `fgn_autocov` (unit-variance autocov at arbitrary Hurst H), `fgn_davies_harte` (O(N log N) exact FFT synthesis), `fgn_drive_trace` (shaped drive trace for use as `i_ext_a`).
+- **`wk.py`** — Wiener-Kolmogorov prediction-floor computations. `durbin_levinson` (O(n²) recursion on any autocov sequence, with divide-by-zero and float32 clamp guards), `windowed_fgn_autocov` (non-overlapping by default, arbitrary stride for future overlapping-window experiments), `wk_floor_windowed_fgn` (convenience wrapper).
 
 ### Experiments (`experiments/`)
 
-Each step's self-contained runnable. See `perf_history.md` for measured numbers on the reference machine (Huawei MateBook X Pro 2018, i7-8550U + NVIDIA MX150, 2 GB VRAM).
+Each step is a self-contained runnable. See `perf_history.md` for measured numbers on the reference machine (Huawei MateBook X Pro 2018, i7-8550U + NVIDIA MX150, 2 GB VRAM). Every significant experiment has a dedicated perf_history entry with caveats.
 
-- **`step02_throughput.py`** — LIF forward-sim throughput on dense weights. Baseline: 8.35e6 neuron-steps / s, 40 Hz firing rate, N=1024, T=10 000.
-- **`step03_slotpool_throughput.py`** — Same scenario with slot-pool synapses (K=64). Baseline: 4.17e7 neuron-steps / s (~5× over dense).
-- **`step04_plastic_throughput.py`** — Slot pool + three-factor STDP + valence + adrenaline. Baseline: 1.78e7 neuron-steps / s (~2.4× slower than step 3 for the plasticity overhead). Mean v drifts 0.040 → 0.093 over 10 s simulated time; at least one slot saturates to `v_max`.
-- **`step05_ga_target_rate.py`** — GA outer loop evolving scaffolds to track a time-varying target firing rate driven by a piecewise adrenaline signal. Inner-loop sims are `vmap`ped across the population. ~22 ms per generation on MX150; 80 generations in ~1.8 s at N=32, K=8, T=2 000, pop=48. Three of four adrenaline segments track within ~8 Hz; one segment exposes a floor problem in the multiplicative-gain mechanism (low adrenaline pushes some cells below V_THRESH, uncorrectable by weight tuning).
+- **`step02_throughput.py`** — LIF dense-weight throughput baseline.
+- **`step03_slotpool_throughput.py`** — Slot-pool forward-sim baseline (~5× speedup over dense at K=64).
+- **`step04_plastic_throughput.py`** — Slot pool + STDP + modulators.
+- **`step05_ga_target_rate.py`** — Direct-encoding GA evolving scaffolds to track a target rate; exposed the multiplicative-gain floor problem that motivated the `tau_m_scale` gain mechanism.
+- **`step07_*.py` / `step07e_paired_cppn_n256.py`** — Paired-agent signal-following; direct and CPPN encodings at N=256.
+- **`step09_handwired_n256_ei.py`** — E/I substrate validation at canonical values (D007).
+- **`step10_closedloop_adrenaline.py`** — Closed-loop adrenaline breaks the static 30 Hz firing-rate ceiling; multi-seed confirms result is seed-independent.
+- **`step11_cppn_closedloop.py`** — CPPN GA + E/I + closed-loop. Open-loop CPPN beats hand-wired cross-E-only by 10%; closed-loop CPPN discovers an 87.9% cross / 12.1% recurrent topology that beats hand-wired closed-loop by 12%.
+- **`step12_tonic_sweep.py`** — Peeled tonic drive down from 16 mV. Tonic is load-bearing: closed-loop extends viable range to ~8 mV, then hits a physics cliff (sub-threshold neurons can't be rescued by shortening τ_m).
+- **`step13_ei_perturbation.py`** — 5×5 grid of (inhibitory_fraction, i_weight_multiplier) around D007. Multi-seed comparison produced D008, tightening to `(0.2, 8.0)`.
+- **`step14_fgn_stimulus.py`** — fGn-driven A at H ∈ {0.3, 0.5, 0.7, 0.9}. Architecture fitness is H-dependent but stumbles through variance regimes rather than exploiting memory structure.
+- **`step15_wk_floor_comparison.py`** — Compared step 14's observed prediction MSE to the Wiener-Kolmogorov theoretical optimum. Closed-loop is 1.9–2.4× above the floor at every H (strikingly close to optimal for an architecture with no explicit memory).
 
 ### Tests (`tests/`)
 
-31 behavioural and unit tests. `pytest --cov --cov-branch` reports **100% branch coverage** across all four library modules.
+116 behavioural and unit tests. `pytest --cov --cov-branch` reports **100% branch coverage** across all ten library modules.
 
 ### Quality gates
 
@@ -71,12 +81,12 @@ Plus independent code review by an isolated Claude subagent (clean context, no p
 
 ### What is deliberately not yet implemented
 
-- **Structural slot release / acquisition** — "exuberance and pruning" proper. Slots with `v = v_min = 0` are functionally silent but still structurally bound; the free pool is unused. This is the missing piece before the project can claim genuine developmental dynamics.
+- **Slot acquisition from the free pool** — slot *release* exists in `structural.py`; genuine rebinding of released slots onto new pre-neurons is the missing half of "exuberance and pruning."
+- **Inhibitory-specific STDP rules** — Vogels 2011 anti-Hebbian rule on I synapses. Deferred; may interact with D008's stronger `i_mult`.
 - **Additional chemical signals** — cortisol, oxytocin, vasopressin, BDNF, NO. Added one at a time as specific experiments need them.
 - **Noisy behavioural sim (Phase 2)** — process variation, transistor mismatch, capacitor leakage, quantization. Starts when Phase 1 architecture is declared frozen.
 - **Circuit-level validation (Phase 3)** and **layout / tape-out (Phase 4)**.
-- **Indirect-encoding GA** — direct encoding blows up at N > a few hundred; indirect (CPPN / developmental rules, HyperNEAT-style) is the scaling path. Not needed yet at toy scale.
-- **Multi-agent / social scenarios** — any social-intelligence target implies at minimum two silicritter instances whose spike outputs feed each other's inputs. Not yet wired.
+- **Non-stationary stimulus tasks** — the step 15 finding suggests memory-capable architectures would need genuinely memory-demanding tasks (non-stationary signals, longer prediction horizons, multi-stream attention) to show advantage; stationary fGn already has very little memory headroom available.
 
 ---
 
@@ -91,13 +101,13 @@ python3.12 -m venv .venv
 
 Dependencies pull in `jax[cuda12]` with bundled NVIDIA CUDA 12 runtime libraries. An NVIDIA GPU (CC 6.0+, ~1 GB free VRAM) is required for the GPU-backed experiments; everything falls back to CPU if no GPU is present but will be much slower.
 
-Run the experiments:
+Run an experiment (all are self-contained scripts; browse `experiments/` for the full set):
 
 ```bash
-.venv/bin/python experiments/step02_throughput.py
-.venv/bin/python experiments/step03_slotpool_throughput.py
-.venv/bin/python experiments/step04_plastic_throughput.py
-.venv/bin/python experiments/step05_ga_target_rate.py
+.venv/bin/python experiments/step10_closedloop_adrenaline.py --n-seeds=5
+.venv/bin/python experiments/step11_cppn_closedloop.py
+.venv/bin/python experiments/step13_ei_perturbation.py
+.venv/bin/python experiments/step15_wk_floor_comparison.py
 ```
 
 Run tests:
@@ -110,7 +120,7 @@ Run tests:
 
 ## Project documentation
 
-- **`DECISIONS.md`** — architectural decision log. Immutable entries with supersession annotations on deprecated entries. Read this for the history of why the project looks the way it does.
+- **`DECISIONS.md`** — architectural decision log. Immutable entries D001–D008 with supersession annotations on deprecated entries (D007 → D008 is the first supersession). Read this for the history of why the project looks the way it does.
 - **`CLAUDE.md`** — project-local instructions for Claude Code sessions.
 - **`perf_history.md`** — durable performance log. One entry per significant experiment run, with measured numbers and honest commentary on what was and wasn't demonstrated.
 - **`SESSION-HANDOFF.md`** — origin context from the 2026-04-21 session that spawned this project.
