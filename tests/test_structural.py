@@ -21,9 +21,25 @@ from silicritter.plasticity import (
 from silicritter.slotpool import SlotPool, init_random
 from silicritter.structural import (
     StructuralParams,
+    apply_acquisition,
     apply_release,
     default_structural_params,
 )
+
+
+def _acq_params(
+    prob: float = 1.0,
+    initial_v: float = 0.2,
+    plasticity_rate: float = 1.0,
+) -> StructuralParams:
+    """Acquisition-focused params with release disabled."""
+    return StructuralParams(
+        v_release_threshold=0.0,
+        release_dwell_steps=1_000_000,
+        acquisition_prob=prob,
+        acquisition_initial_v=initial_v,
+        acquisition_plasticity_rate=plasticity_rate,
+    )
 
 
 def _pool_with(
@@ -218,7 +234,9 @@ def test_step_plastic_ordering_stdp_before_release() -> None:
     plasticity_rate = jnp.ones_like(v_init)
     active = jnp.ones_like(v_init, dtype=jnp.bool_)
     release_counter = jnp.zeros_like(pre_ids)
-    pool = _pool_with(pre_ids, v_init, plasticity_rate, active, release_counter)
+    pool = _pool_with(
+        pre_ids, v_init, plasticity_rate, active, release_counter,
+    )
 
     lif = LIFState(
         v=jnp.array([-65.0, -51.0], dtype=jnp.float32),
@@ -275,3 +293,182 @@ def test_apply_release_boundary_at_threshold() -> None:
     )
     new_pool = apply_release(pool, params)
     assert int(new_pool.release_counter[0, 0]) == 0
+
+
+def test_default_structural_params_has_zero_acquisition() -> None:
+    """Backward-compat: default params disable acquisition."""
+    params = default_structural_params()
+    assert params.acquisition_prob == 0.0
+
+
+def test_apply_acquisition_leaves_active_slots_untouched() -> None:
+    """Active slots are not candidates for rebinding."""
+    pre_ids = jnp.array([[7, 8, 9]], dtype=jnp.int32)
+    v = jnp.array([[0.5, 0.5, 0.5]], dtype=jnp.float32)
+    plasticity_rate = jnp.full_like(v, 0.3)
+    active = jnp.ones_like(v, dtype=jnp.bool_)
+    release_counter = jnp.zeros_like(pre_ids)
+    pool = _pool_with(pre_ids, v, plasticity_rate, active, release_counter)
+    params = _acq_params(prob=1.0, initial_v=0.2, plasticity_rate=1.0)
+    new_pool = apply_acquisition(
+        pool, params, jax.random.PRNGKey(0), n_pre=16,
+    )
+    assert bool(jnp.all(new_pool.pre_ids == pool.pre_ids))
+    assert bool(jnp.all(new_pool.v == pool.v))
+    assert bool(jnp.all(new_pool.plasticity_rate == pool.plasticity_rate))
+    assert bool(jnp.all(new_pool.active))
+
+
+def test_apply_acquisition_zero_prob_is_noop() -> None:
+    """prob=0 preserves the pool exactly, even when inactive slots exist."""
+    pre_ids = jnp.array([[0, 1]], dtype=jnp.int32)
+    v = jnp.array([[0.0, 0.5]], dtype=jnp.float32)
+    plasticity_rate = jnp.array([[0.0, 0.3]], dtype=jnp.float32)
+    active = jnp.array([[False, True]], dtype=jnp.bool_)
+    release_counter = jnp.zeros_like(pre_ids)
+    pool = _pool_with(pre_ids, v, plasticity_rate, active, release_counter)
+    params = _acq_params(prob=0.0)
+    new_pool = apply_acquisition(
+        pool, params, jax.random.PRNGKey(0), n_pre=16,
+    )
+    assert bool(jnp.all(new_pool.pre_ids == pool.pre_ids))
+    assert bool(jnp.all(new_pool.v == pool.v))
+    assert bool(jnp.all(new_pool.active == pool.active))
+
+
+def test_apply_acquisition_prob_one_rebinds_all_inactive() -> None:
+    """With prob=1, every inactive slot gets rebound."""
+    pre_ids = jnp.array([[0, 1, 2]], dtype=jnp.int32)
+    v = jnp.array([[0.0, 0.0, 0.5]], dtype=jnp.float32)
+    plasticity_rate = jnp.array([[0.0, 0.0, 0.3]], dtype=jnp.float32)
+    active = jnp.array([[False, False, True]], dtype=jnp.bool_)
+    release_counter = jnp.array([[0, 0, 0]], dtype=jnp.int32)
+    pool = _pool_with(pre_ids, v, plasticity_rate, active, release_counter)
+    params = _acq_params(prob=1.0, initial_v=0.25, plasticity_rate=0.7)
+    new_pool = apply_acquisition(
+        pool, params, jax.random.PRNGKey(1), n_pre=32,
+    )
+    assert bool(new_pool.active[0, 0])
+    assert bool(new_pool.active[0, 1])
+    assert abs(float(new_pool.v[0, 0]) - 0.25) < 1e-5
+    assert abs(float(new_pool.v[0, 1]) - 0.25) < 1e-5
+    assert abs(float(new_pool.plasticity_rate[0, 0]) - 0.7) < 1e-5
+    assert abs(float(new_pool.plasticity_rate[0, 1]) - 0.7) < 1e-5
+    # Slot 2 (already active) is untouched.
+    assert float(new_pool.v[0, 2]) == 0.5
+    assert abs(float(new_pool.plasticity_rate[0, 2]) - 0.3) < 1e-5
+    assert int(new_pool.pre_ids[0, 0]) >= 0
+    assert int(new_pool.pre_ids[0, 0]) < 32
+    assert int(new_pool.pre_ids[0, 1]) >= 0
+    assert int(new_pool.pre_ids[0, 1]) < 32
+
+
+def test_apply_acquisition_resets_release_counter() -> None:
+    """A rebound slot restarts its release counter at zero."""
+    pre_ids = jnp.array([[0]], dtype=jnp.int32)
+    v = jnp.array([[0.0]], dtype=jnp.float32)
+    plasticity_rate = jnp.array([[0.0]], dtype=jnp.float32)
+    active = jnp.array([[False]], dtype=jnp.bool_)
+    release_counter = jnp.array([[42]], dtype=jnp.int32)
+    pool = _pool_with(pre_ids, v, plasticity_rate, active, release_counter)
+    params = _acq_params(prob=1.0)
+    new_pool = apply_acquisition(
+        pool, params, jax.random.PRNGKey(2), n_pre=8,
+    )
+    assert int(new_pool.release_counter[0, 0]) == 0
+
+
+def test_apply_acquisition_deterministic_rng() -> None:
+    """Same rng and pool gives byte-identical output."""
+    pre_ids = jnp.array([[0, 1, 2, 3]], dtype=jnp.int32)
+    v = jnp.zeros_like(pre_ids, dtype=jnp.float32)
+    plasticity_rate = jnp.zeros_like(v)
+    active = jnp.zeros_like(v, dtype=jnp.bool_)
+    release_counter = jnp.zeros_like(pre_ids)
+    pool = _pool_with(pre_ids, v, plasticity_rate, active, release_counter)
+    params = _acq_params(prob=0.5)
+    new_pool_a = apply_acquisition(
+        pool, params, jax.random.PRNGKey(3), n_pre=16,
+    )
+    new_pool_b = apply_acquisition(
+        pool, params, jax.random.PRNGKey(3), n_pre=16,
+    )
+    assert bool(jnp.all(new_pool_a.pre_ids == new_pool_b.pre_ids))
+    assert bool(jnp.all(new_pool_a.active == new_pool_b.active))
+
+
+def test_apply_acquisition_uniform_pre_id_coverage() -> None:
+    """Uniform-random acquisition produces ~uniform pre_id distribution.
+
+    With n_pre=10 and many inactive slots all acquiring, the sampled
+    pre_ids should cover the full range roughly uniformly.
+    """
+    n_post = 200
+    k_slots = 16
+    n_pre = 10
+    pre_ids = jnp.zeros((n_post, k_slots), dtype=jnp.int32)
+    v = jnp.zeros((n_post, k_slots), dtype=jnp.float32)
+    plasticity_rate = jnp.zeros_like(v)
+    active = jnp.zeros_like(v, dtype=jnp.bool_)
+    release_counter = jnp.zeros_like(pre_ids)
+    pool = _pool_with(pre_ids, v, plasticity_rate, active, release_counter)
+    params = _acq_params(prob=1.0)
+    new_pool = apply_acquisition(
+        pool, params, jax.random.PRNGKey(4), n_pre=n_pre,
+    )
+    counts = jnp.bincount(new_pool.pre_ids.flatten(), length=n_pre)
+    min_count = int(counts.min())
+    max_count = int(counts.max())
+    assert min_count > 200
+    assert max_count < 500
+
+
+def test_apply_acquisition_hebbian_bias_favors_active_pre() -> None:
+    """With pre_activity concentrated on a subset, the sampled pre_ids
+    are biased toward that subset.
+    """
+    n_post = 100
+    k_slots = 16
+    n_pre = 20
+    pre_activity = jnp.concatenate([
+        jnp.full((15,), 0.01, dtype=jnp.float32),
+        jnp.full((5,), 1.0, dtype=jnp.float32),
+    ])
+    pre_ids = jnp.zeros((n_post, k_slots), dtype=jnp.int32)
+    v = jnp.zeros((n_post, k_slots), dtype=jnp.float32)
+    plasticity_rate = jnp.zeros_like(v)
+    active = jnp.zeros_like(v, dtype=jnp.bool_)
+    release_counter = jnp.zeros_like(pre_ids)
+    pool = _pool_with(pre_ids, v, plasticity_rate, active, release_counter)
+    params = _acq_params(prob=1.0)
+    new_pool = apply_acquisition(
+        pool, params, jax.random.PRNGKey(5), n_pre=n_pre,
+        pre_activity=pre_activity,
+    )
+    n_total = n_post * k_slots
+    n_hot = int((new_pool.pre_ids >= 15).sum())
+    frac_hot = n_hot / n_total
+    # Expected ~5*1.0 / (15*0.01 + 5*1.0) = 5/5.15 ~ 0.97. Allow 0.90.
+    assert frac_hot > 0.90
+
+
+def test_apply_acquisition_shape_preservation() -> None:
+    """Output arrays have the same shape as input."""
+    n_post = 8
+    k_slots = 4
+    pre_ids = jnp.arange(n_post * k_slots, dtype=jnp.int32).reshape(
+        n_post, k_slots
+    )
+    v = jnp.full_like(pre_ids, 0.0, dtype=jnp.float32)
+    plasticity_rate = jnp.zeros_like(v)
+    active = jnp.zeros_like(v, dtype=jnp.bool_)
+    release_counter = jnp.zeros_like(pre_ids)
+    pool = _pool_with(pre_ids, v, plasticity_rate, active, release_counter)
+    new_pool = apply_acquisition(
+        pool, _acq_params(prob=1.0), jax.random.PRNGKey(6), n_pre=16,
+    )
+    assert new_pool.pre_ids.shape == pool.pre_ids.shape
+    assert new_pool.v.shape == pool.v.shape
+    assert new_pool.plasticity_rate.shape == pool.plasticity_rate.shape
+    assert new_pool.active.shape == pool.active.shape
+    assert new_pool.release_counter.shape == pool.release_counter.shape
