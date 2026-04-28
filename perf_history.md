@@ -1324,3 +1324,103 @@ worth doing eventually but not blocking any current experiment.
 
 The change would touch step16, step17, overnight_batch, and a few
 test files. Bounded but real.
+
+---
+
+## 2026-04-28 — Full overnight_batch run on new laptop, post-cleanup
+
+First full overnight_batch run on the new laptop (ASUS VivoBook
+X580GD, GTX 1050 Mobile, 4 GB VRAM) after the laptop migration AND
+the multi-pass review-finding cleanup landed in commit fd30661.
+Headline: faster than expected, and bit-for-bit equivalent to the
+pre-cleanup baseline.
+
+- **Script:** `experiments/overnight_batch.py` (default `main()`,
+  all 8 blocks).
+- **Commit under test:** `fd30661` ("Phase 1 raster fix + multi-pass
+  review-finding cleanup"). Baseline for comparison: archived CSVs
+  at `overnight_results/archive_2026-04-28_pre-fd30661/` from
+  pre-cleanup runs on the old MateBook X Pro (MX150, 2 GB).
+- **Machine:** ASUS VivoBook X580GD (Intel i7-8550U + NVIDIA GTX
+  1050 Mobile, 4 GB VRAM, ~1.6× compute / ~2.3× bandwidth vs old
+  MX150). NVIDIA driver 580.142, JAX 0.10.0 with CUDA 12.9 plugin.
+- **Total wall time:** 1.21 hours (72 min) end-to-end. Estimate
+  before run was 6–10 hours; reality was ~6× faster.
+- **Result:** all 8 blocks completed cleanly, all auto-commits +
+  pushes landed. Zero errors in the log.
+
+### Per-block timing
+
+| block | runs | wall time |
+|---|---:|---:|
+| 1 step17_factorial            | 490 | 32 min |
+| 2 acquisition_probability     |  45 |  3 min |
+| 3 long_training               |  50 |  6 min |
+| 4 step16_multiseed            |  75 |  3 min |
+| 5 best_config_confirm         |  60 |  4 min |
+| 6 strong_op_confirm           |  60 |  4 min |
+| 7 long_duration_confirm       |  40 | 11 min |
+| 8 stdp_regression_bisect      | 100 |  9 min |
+| **total**                     | **920** | **72 min** |
+
+Block 1 dominates (44% of wall time) because of its 490-run config
+× seed grid; all other blocks are <11 minutes. Per-run cost is
+~1.5–6 seconds for short-T blocks, scaling with `n_train_steps`
+for blocks 7 and 8.
+
+### Bit-for-bit comparison vs pre-cleanup baseline
+
+A column-by-column diff of every scientific column (filtering out
+`wall_sec` and `train_time` which always vary) across all 920 rows
+showed **zero numerical drift**. Every block matches its
+pre-cleanup CSV exactly:
+
+- block1_step17_factorial: identical across 490 rows
+- block2_acquisition_probability: identical across 45 rows
+- block3_long_training: identical across 50 rows
+- block4_step16_multiseed: identical across 75 rows
+- block5_best_config_confirm: identical across 60 rows
+- block6_strong_op_confirm: identical across 60 rows
+- block7_long_duration_confirm: identical across 40 rows
+- block8_stdp_regression_bisect: identical across 100 rows
+
+The cleanup is observationally indistinguishable from the prior
+code path on every numerical metric.
+
+The most surprising piece: **block 1 also matched bit-for-bit**,
+despite the cleanup adding a `step > 0` guard to
+`_acq_prob_periodic` that changed the per-step probability output
+at step=0 from 1.0 to 0.0. Mechanism: the initial pool is fully
+active at step=0, so the `acquire_mask = ~pool.active & bernoulli`
+intersection is all-False regardless of the prob value. The fix
+removes a redundant RNG draw + Bernoulli computation but produces
+identical slot state — so all downstream metrics (fit_before,
+fit_after, cross_e_frac_end, etc.) are bit-identical.
+
+### Implications
+
+1. **Refactor discipline confirmed.** The 11-task multi-pass
+   cleanup landed without changing any experimental output. Future
+   refactors can use this same archive-and-diff pattern as a
+   regression check before claiming the change is purely structural.
+2. **Cycle time is short.** 72 minutes for a full revalidation
+   batch means iterate-and-rerun is cheap on this laptop — fits
+   between morning coffee and lunch. The compute budget is no
+   longer a planning constraint at the current Phase 1/2 scale.
+3. **Phase 3 still unblocked-but-not-yet-fast.** The current
+   batches operate at N≤20 seeds and T≤500k steps. Phase 3 plans
+   N=100/N=500 × T=10M, ~100× the current per-batch compute.
+   Linear extrapolation: ~120 hours on this laptop, vs.
+   ~10–15 minutes on a g5.xlarge (A10G, AWS spot). The cloud-burst
+   path is now the practical route for Phase 3, not laptop time.
+
+### Caveats
+
+- **Single-machine measurement.** All numbers are from one machine
+  on one OS state. Future runs may show ±10% wall-time noise from
+  thermal throttling, background processes, or driver updates.
+  The bit-for-bit comparison is robust against this since wall
+  time isn't a scientific column; deltas are.
+- **Process snapshot.** This entry locks in the 1.21-hour full-
+  batch reference. Any future change that bumps full-batch time
+  past ~90 minutes warrants investigation.
