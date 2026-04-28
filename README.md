@@ -30,7 +30,7 @@ Phases:
 
 ---
 
-## Present status (Phase 1, steps 1–15 complete)
+## Present status (Phase 1, steps 1–17 in progress; revalidation paused mid-flight)
 
 What exists today is an idealised JAX simulation of a paired-agent plastic spiking substrate with E/I balance, a closed-loop adrenaline gain controller, CPPN indirect encoding, and a fractional-Gaussian-noise stimulus generator with a Wiener-Kolmogorov-floor cross-check. No chip, no circuit-level validation yet.
 
@@ -63,10 +63,12 @@ Each step is a self-contained runnable. See `perf_history.md` for measured numbe
 - **`step13_ei_perturbation.py`** — 5×5 grid of (inhibitory_fraction, i_weight_multiplier) around D007. Multi-seed comparison produced D008, tightening to `(0.2, 8.0)`.
 - **`step14_fgn_stimulus.py`** — fGn-driven A at H ∈ {0.3, 0.5, 0.7, 0.9}. Architecture fitness is H-dependent but stumbles through variance regimes rather than exploiting memory structure.
 - **`step15_wk_floor_comparison.py`** — Compared step 14's observed prediction MSE to the Wiener-Kolmogorov theoretical optimum. Closed-loop is 1.9–2.4× above the floor at every H (strikingly close to optimal for an architecture with no explicit memory).
+- **`step16_stdp_learning.py`** — First experiment with `plasticity_rate > 0` everywhere. Sweep over plasticity rate from a random initial B pool with closed-loop adrenaline at gain=50. Lifetime STDP does measurable work but cannot reach GA-discovered fitness from a random init — the useful-slot fraction is frozen at initialization because STDP adjusts `v` but not `pre_ids`.
+- **`step17_structural_growth.py`** — Slot acquisition + release combined with STDP — the "exuberance and pruning" developmental loop. Acquisition modes (`off`, `periodic`, `valence_gated`, `valence_inverted`) and release thresholds explored. Long-duration revalidation runs gated on the Phase 1 raster-retention fix landed 2026-04-26.
 
 ### Tests (`tests/`)
 
-116 behavioural and unit tests. `pytest --cov --cov-branch` reports **100% branch coverage** across all ten library modules.
+127 behavioural and unit tests. `pytest --cov --cov-branch` reports **100% branch coverage** across all ten library modules.
 
 ### Quality gates
 
@@ -327,6 +329,38 @@ to a new random pre-neuron) does not.
 existing release and LTD-driven weight collapse, this closes the
 "exuberance + sculpting" developmental loop the project has been
 pitching since the originating session.
+
+### 2026-04-24 → 2026-04-26 — Revalidation paused; laptop migration; raster fix
+
+Block 7 of an N=20 revalidation sweep collapsed step 10's
+headline N=5 closed-loop result to a null. Audit found that most
+prior claims inherit from a step-10 N=1 measurement; pausing the
+revalidation pending a Phase 1 fix and a larger N=100/500 batch.
+
+In parallel, migrated development from the Huawei MateBook X Pro
+(MX150, 2 GB VRAM) to an ASUS VivoBook X580GD (GTX 1050 Mobile,
+4 GB VRAM, ~1.6× compute / ~2.3× bandwidth). Phase 0 toolchain
+validation confirmed bit-exact reproduction of the step 10 N=5
+result across the hardware swap, on the same JAX 0.10.0 stack.
+Workload remains launch-overhead-bound (~15% GPU util on a
+scan-body-dispatch profile) — bottleneck is XLA dispatch, not raw
+compute.
+
+**Phase 1 fix (2026-04-26):** Both `step16` and `step17`
+`_training_scan` returned per-step `(T, N_NEURONS)` spike rasters
+that callers either discarded entirely (`step17`) or used only
+for a global mean firing rate (`step16`). At T=10M the rasters
+are ~5 GB each and exceed the 4 GB VRAM ceiling, gating any
+long-duration revalidation run. Dropped the rasters; `step16`
+now returns an already-computed scalar `rate` trace (free —
+computed for the EMA controller). `tests/test_training_scan_memory.py`
+pins the contract: no scan output may be a per-step raster.
+Memory at T=10M: 5.0 GB → 80 MB (`step17`), 5.0 GB → 120 MB
+(`step16`).
+
+**Resumes from:** N=100 / N=500 revalidation batches with the
+raster-retention fix in place, starting with step 10
+hand-wired closed-loop as the root of the risk graph.
 
 ---
 

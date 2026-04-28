@@ -41,6 +41,8 @@ from __future__ import annotations
 import argparse
 import itertools
 import time
+from collections.abc import Callable
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -54,6 +56,7 @@ from silicritter.closedloop import (
 from silicritter.lif import init_state
 from silicritter.paired import (
     PairedState,
+    cross_e_partner_mask,
     make_pool_for_partner,
     step_paired,
 )
@@ -80,6 +83,12 @@ B_TONIC_MV: float = 16.0
 INHIBITORY_FRACTION: float = 0.2
 I_WEIGHT_MULTIPLIER: float = 8.0  # D008
 
+# Partner (A) pool seed. Held fixed across all B-seed sweeps so fitness
+# differences attribute to B's learning, not partner-substrate
+# variation. Cross-partner robustness is a separate experimental
+# design (vary this seed independently from B's seed).
+PARTNER_SEED: int = 777
+
 CONTROLLER_DECAY: float = 0.98
 BASELINE_ADRENALINE: float = 1.0
 CLOSED_LOOP_GAIN: float = 50.0
@@ -103,6 +112,12 @@ ACQ_PROB_STOCHASTIC: float = 0.001
 PERIODIC_INTERVAL_STEPS: int = 500
 # For valence_gated mode, max acq prob (scaled by valence 0..1):
 ACQ_PROB_VALENCE_MAX: float = 0.002
+
+# Sentinel release_duration for the STDP-only baseline. 500x longer than
+# N_TRAIN_STEPS so no slot ever accumulates enough sub-threshold dwell
+# to release within the run; lets the baseline isolate STDP-only
+# learning from release/acquisition dynamics.
+RELEASE_DURATION_DISABLED: int = 10_000_000
 
 
 def _stdp_params() -> STDPParams:
@@ -142,7 +157,7 @@ def _random_b_pool(seed: int) -> SlotPool:
 
 def _build_state(pool_b: SlotPool) -> PairedState:
     pool_a = make_pool_for_partner(
-        N_NEURONS, K_SLOTS, jax.random.PRNGKey(777)
+        N_NEURONS, K_SLOTS, jax.random.PRNGKey(PARTNER_SEED)
     )
     return PairedState(
         a=PlasticNetState(
@@ -160,7 +175,12 @@ def _build_state(pool_b: SlotPool) -> PairedState:
 
 def _build_drives(
     n_steps: int,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
+) -> tuple[jax.Array, jax.Array]:
+    """A drive (piecewise-constant) and B tonic drive.
+
+    A runs open-loop, so `adrenaline_a` is not threaded through —
+    `step_paired` defaults `adrenaline_a` to ADRENALINE_OPEN_LOOP.
+    """
     assert n_steps % len(A_DRIVE_PROFILE) == 0
     seg_len = n_steps // len(A_DRIVE_PROFILE)
     i_ext_a = jnp.concatenate(
@@ -172,53 +192,106 @@ def _build_drives(
     i_ext_b = jnp.full(
         (n_steps, N_NEURONS), B_TONIC_MV, dtype=jnp.float32,
     )
-    adrenaline_a = jnp.ones((n_steps,), dtype=jnp.float32)
-    return i_ext_a, i_ext_b, adrenaline_a
+    return i_ext_a, i_ext_b
 
 
-class Config:
-    """Sweep axis tuple for one training run."""
+class Config(NamedTuple):
+    """Sweep axis tuple for one training run.
 
-    def __init__(
-        self,
-        name: str,
-        acq_mode: str,
-        pre_id_source: str,
-        acq_initial_v: float,
-        release_threshold: float,
-        release_duration: int,
-    ) -> None:
-        self.name = name
-        self.acq_mode = acq_mode  # stochastic | periodic | valence_gated | off
-        self.pre_id_source = pre_id_source  # uniform | hebbian
-        self.acq_initial_v = acq_initial_v
-        self.release_threshold = release_threshold
-        self.release_duration = release_duration
+    Python-side configuration record (never passed through JAX as a
+    pytree). NamedTuple chosen for consistency with the project's
+    other record types (SlotPool, PairedState, ControllerState,
+    StructuralParams).
+    """
+
+    # acq_mode: one of off, stochastic, periodic, valence_gated,
+    #           valence_inverted (see _acq_prob_at_step dispatch)
+    # pre_id_source: one of uniform, hebbian
+    name: str
+    acq_mode: str
+    pre_id_source: str
+    acq_initial_v: float
+    release_threshold: float
+    release_duration: int
+
+
+# Acquisition-mode dispatch handlers. All take a uniform
+# (step, valence) signature so they can be looked up by mode name in
+# `_ACQ_MODE_DISPATCH`; some modes don't consume both arguments.
+# pylint: disable=unused-argument
+def _acq_prob_off(step: jax.Array, valence: jax.Array) -> jax.Array:
+    return jnp.asarray(0.0, dtype=jnp.float32)
+
+
+def _acq_prob_stochastic(step: jax.Array, valence: jax.Array) -> jax.Array:
+    return jnp.asarray(ACQ_PROB_STOCHASTIC, dtype=jnp.float32)
+
+
+def _acq_prob_periodic(step: jax.Array, valence: jax.Array) -> jax.Array:
+    # Fire once per PERIODIC_INTERVAL_STEPS, with prob 1 at the firing
+    # step (so all inactive slots rebind at once). The `step > 0` guard
+    # skips the spurious step=0 trigger: the initial pool is fully
+    # active, so no acquisition would fire anyway, but the test of
+    # "first trigger after one full interval" matches the firing-cadence
+    # intent.
+    hit = jnp.logical_and(
+        step > 0, jnp.equal(step % PERIODIC_INTERVAL_STEPS, 0),
+    )
+    return jnp.where(
+        hit,
+        jnp.asarray(1.0, dtype=jnp.float32),
+        jnp.asarray(0.0, dtype=jnp.float32),
+    )
+
+
+def _acq_prob_valence_gated(
+    step: jax.Array, valence: jax.Array,
+) -> jax.Array:
+    # Exploit-when-succeeding: prob scales with current valence (high
+    # when tracking is good).
+    return jnp.asarray(ACQ_PROB_VALENCE_MAX, dtype=jnp.float32) * valence
+
+
+def _acq_prob_valence_inverted(
+    step: jax.Array, valence: jax.Array,
+) -> jax.Array:
+    # Explore-when-failing (adrenergic-arousal intuition). Prob scales
+    # with (1 - valence) so poor tracking drives more rebinding.
+    return jnp.asarray(ACQ_PROB_VALENCE_MAX, dtype=jnp.float32) * (
+        jnp.asarray(1.0, dtype=jnp.float32) - valence
+    )
+# pylint: enable=unused-argument
+
+
+_ACQ_MODE_DISPATCH: dict[
+    str, Callable[[jax.Array, jax.Array], jax.Array],
+] = {
+    "off": _acq_prob_off,
+    "stochastic": _acq_prob_stochastic,
+    "periodic": _acq_prob_periodic,
+    "valence_gated": _acq_prob_valence_gated,
+    "valence_inverted": _acq_prob_valence_inverted,
+}
 
 
 def _acq_prob_at_step(
-    mode: str, step: int, valence: jax.Array,
+    mode: str, step: jax.Array, valence: jax.Array,
 ) -> jax.Array:
-    """Per-slot acquisition probability this step, by mode."""
-    if mode == "off":
-        return jnp.float32(0.0)
-    if mode == "stochastic":
-        return jnp.float32(ACQ_PROB_STOCHASTIC)
-    if mode == "periodic":
-        # Fire once per PERIODIC_INTERVAL_STEPS, with prob 1 at the
-        # firing step (so all inactive slots rebind at once).
-        hit = jnp.equal(step % PERIODIC_INTERVAL_STEPS, 0)
-        return jnp.where(hit, jnp.float32(1.0), jnp.float32(0.0))
-    if mode == "valence_gated":
-        # Exploit-when-succeeding: prob scales with current valence
-        # (high when tracking is good).
-        return jnp.float32(ACQ_PROB_VALENCE_MAX) * valence
-    # valence_inverted: explore-when-failing (adrenergic-arousal
-    # intuition). Prob scales with (1 - valence) so poor tracking
-    # drives more rebinding.
-    return jnp.float32(ACQ_PROB_VALENCE_MAX) * (
-        jnp.float32(1.0) - valence
-    )
+    """Per-slot acquisition probability this step, by mode.
+
+    Raises ValueError if `mode` is not in the dispatch table — this
+    catches typos and unhandled additions to the mode set, instead of
+    silently falling through to one branch's logic. `mode` is a Python
+    string at trace time (Config field, not a JIT-traced array), so the
+    raise is legitimate under jit/scan.
+    """
+    fn = _ACQ_MODE_DISPATCH.get(mode)
+    if fn is None:
+        raise ValueError(
+            f"unknown acq mode: {mode!r}; "
+            f"expected one of {sorted(_ACQ_MODE_DISPATCH)}"
+        )
+    return fn(step, valence)
 
 
 def _training_scan(
@@ -227,17 +300,27 @@ def _training_scan(
     b_is_inh: jax.Array,
     i_ext_a: jax.Array,
     i_ext_b: jax.Array,
-    adrenaline_a: jax.Array,
     config: Config,
     seed: int,
-) -> tuple[PairedState, jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Closed-loop adrenaline + valence-gated STDP + release + acquisition."""
+) -> tuple[PairedState, jax.Array, jax.Array]:
+    """Closed-loop adrenaline + valence-gated STDP + release + acquisition.
+
+    Per-step spike rasters are intentionally NOT returned: at T=10M with
+    N_NEURONS=256 they would be ~5 GB and exceed the 4 GB GPU ceiling.
+    Only scalar-per-step traces (valence, active-slot count) are kept;
+    callers that need population-level rates compute them inside the scan.
+    """
     stdp = _stdp_params()
     ctrl_p = _ctrl_params()
     struct_p = StructuralParams(
         v_release_threshold=config.release_threshold,
         release_dwell_steps=config.release_duration,
-        acquisition_prob=1.0,  # overridden per-step via apply_acquisition
+        # Safe placeholder. Per-step value is set via _replace inside
+        # the scan body from _acq_prob_at_step. If a future refactor
+        # ever drops the _replace, defaulting to 0.0 means "no
+        # acquisition" rather than "rebind every inactive slot every
+        # step" — failing closed.
+        acquisition_prob=0.0,
         acquisition_initial_v=config.acq_initial_v,
         acquisition_plasticity_rate=PLASTICITY_RATE,
     )
@@ -246,13 +329,20 @@ def _training_scan(
 
     def scan_step(
         carry: tuple[PairedState, ControllerState, jax.Array, jax.Array],
-        drive: tuple[jax.Array, jax.Array, jax.Array],
+        drive: tuple[jax.Array, jax.Array],
     ) -> tuple[
         tuple[PairedState, ControllerState, jax.Array, jax.Array],
-        tuple[jax.Array, jax.Array, jax.Array, jax.Array],
+        tuple[jax.Array, jax.Array],
     ]:
         state, ctrl, rng, step = carry
-        i_ext_a_t, i_ext_b_t, adr_a_t = drive
+        i_ext_a_t, i_ext_b_t = drive
+        # A runs open-loop: step_paired's `adrenaline_a` defaults to
+        # ADRENALINE_OPEN_LOOP (1.0), so we omit it here. Only B is
+        # under closed-loop adrenaline control.
+        # Causal: valence at step t reflects controller state through
+        # t-1, since step-t spikes haven't happened yet when STDP
+        # needs the modulator. The 1-step offset is dominated by the
+        # EMA's intrinsic ~50-step averaging window. See D009.
         error_prev = ctrl.rate_a_ema - ctrl.rate_b_ema
         valence_b = jnp.maximum(
             jnp.float32(0.0),
@@ -263,7 +353,6 @@ def _training_scan(
             i_ext_a=i_ext_a_t, i_ext_b=i_ext_b_t,
             valence_a=jnp.float32(0.0),
             valence_b=valence_b,
-            adrenaline_a=adr_a_t,
             adrenaline_b=ctrl.adrenaline_b,
             stdp_params=stdp,
             gain_mode="tau_m_scale",
@@ -310,8 +399,6 @@ def _training_scan(
         next_ctrl = ControllerState(new_rate_a, new_rate_b, new_adr)
         n_active = b_pool_acquired.active.astype(jnp.int32).sum()
         return (struct_state, next_ctrl, rng, step + 1), (
-            struct_state.b.lif.spikes,
-            struct_state.a.lif.spikes,
             valence_b,
             n_active,
         )
@@ -319,14 +406,12 @@ def _training_scan(
     initial_ctrl = init_controller(ctrl_p.baseline)
     init_rng = jax.random.PRNGKey(seed + 7000)
     init_step = jnp.int32(0)
-    (final_state, _, _, _), (spikes_b, spikes_a, val_trace, active_trace) = (
-        jax.lax.scan(
-            scan_step,
-            (initial_state, initial_ctrl, init_rng, init_step),
-            (i_ext_a, i_ext_b, adrenaline_a),
-        )
+    (final_state, _, _, _), (val_trace, active_trace) = jax.lax.scan(
+        scan_step,
+        (initial_state, initial_ctrl, init_rng, init_step),
+        (i_ext_a, i_ext_b),
     )
-    return final_state, spikes_a, spikes_b, val_trace, active_trace
+    return final_state, val_trace, active_trace
 
 
 def _measure_fitness(
@@ -339,11 +424,14 @@ def _measure_fitness(
         plasticity_rate=jnp.zeros_like(pool_b.plasticity_rate),
     )
     state = _build_state(frozen)
-    i_ext_a, i_ext_b, adr_a = _build_drives(n_steps)
+    i_ext_a, i_ext_b = _build_drives(n_steps)
     val_zero = jnp.zeros((n_steps,), dtype=jnp.float32)
+    # simulate_closedloop (separate controller helper) still requires
+    # an adrenaline_a trace; A is open-loop so we pass jnp.ones.
+    adr_a_open = jnp.ones((n_steps,), dtype=jnp.float32)
     spikes_a, spikes_b, _ = simulate_closedloop(
         state, _ctrl_params(),
-        i_ext_a, i_ext_b, val_zero, val_zero, adr_a,
+        i_ext_a, i_ext_b, val_zero, val_zero, adr_a_open,
         _stdp_params(),
         gain_mode="tau_m_scale",
         a_is_inhibitory=a_is_inh,
@@ -358,6 +446,8 @@ def _measure_fitness(
     b_rate = spikes_b.astype(jnp.float32).reshape(
         n_windows, WINDOW_STEPS, N_NEURONS
     ).mean(axis=(1, 2))
+    # Fitness = -MSE of (B_k predicting A_{k+1}); 1-window prediction
+    # lag. Higher (less negative) is better.
     return float(-jnp.mean((b_rate[:-1] - a_rate[1:]) ** 2))
 
 
@@ -368,23 +458,22 @@ def _run_config(config: Config, seed: int) -> dict[str, float]:
     pool_b0 = _random_b_pool(seed + 1)
     fit_before = _measure_fitness(pool_b0, a_is_inh, b_is_inh, N_MEASURE_STEPS)
     state0 = _build_state(pool_b0)
-    i_ext_a, i_ext_b, adr_a = _build_drives(N_TRAIN_STEPS)
+    i_ext_a, i_ext_b = _build_drives(N_TRAIN_STEPS)
     t0 = time.perf_counter()
-    final_state, _, _, val_trace, active_trace = _training_scan(
+    final_state, val_trace, active_trace = _training_scan(
         state0, a_is_inh, b_is_inh,
-        i_ext_a, i_ext_b, adr_a,
+        i_ext_a, i_ext_b,
         config, seed,
     )
-    jax.block_until_ready(final_state.b.pool.v)
+    jax.block_until_ready(  # type: ignore[no-untyped-call]
+        final_state.b.pool.v)
     train_time = time.perf_counter() - t0
     trained_pool = final_state.b.pool
     fit_after = _measure_fitness(
         trained_pool, a_is_inh, b_is_inh, N_MEASURE_STEPS,
     )
-    n_ex = N_NEURONS - int(N_NEURONS * INHIBITORY_FRACTION)
-    cross_e_mask = (
-        (trained_pool.pre_ids >= N_NEURONS)
-        & (trained_pool.pre_ids < N_NEURONS + n_ex)
+    cross_e_mask = cross_e_partner_mask(
+        trained_pool, N_NEURONS, a_is_inh,
     )
     return {
         "fit_before": fit_before,
@@ -404,7 +493,10 @@ def _run_config(config: Config, seed: int) -> dict[str, float]:
 
 def _enumerate_configs() -> list[Config]:
     configs: list[Config] = [
-        Config("baseline_stdp_only", "off", "uniform", 0.2, 0.0, 10_000_000),
+        Config(
+            "baseline_stdp_only", "off", "uniform",
+            0.2, 0.0, RELEASE_DURATION_DISABLED,
+        ),
         Config(
             "baseline_release_only", "off", "uniform", 0.2, 0.05, 500,
         ),

@@ -1128,3 +1128,199 @@ The project pitch has always been "innate scaffolds evolved by GA, lifetime lear
 - **Valence signal is heuristic.** `max(0, 1 − |error|/scale)` is a first-pass shaped reward. Alternatives (sign-aware valence, threshold-gated reward, valence driven by prediction error rather than tracking error) are unexplored.
 - **Plasticity_rate=1.0 is biologically implausible.** Real synapses adjust on the ~seconds-to-minutes scale, not per-spike. The 1.0 value here is compensating for the short simulation; biological scaling would be rate ~1e-3 over hour-long simulations. Results at rate=1.0 should be read as "plasticity-saturated" rather than realistic.
 - **Only B is plastic.** Pool A is hand-wired and frozen. An ecosystem-style setup with both agents plastic would have different dynamics (and harder-to-interpret fitness).
+
+---
+
+## 2026-04-27 — Deferred optimization note: `apply_acquisition` Hebbian path
+
+Not a measurement; a documented deferral. Recorded here so future
+work finds the reasoning before re-investigating speculatively.
+
+**Concern (Gemini review, 2026-04-26):** The Hebbian branch of
+`apply_acquisition` (`src/silicritter/structural.py:163-167`) calls
+`jax.random.choice(p=...)` with a per-step probability vector. JAX
+implements this as cumsum + searchsorted — `O(N · K · log n_pre)`
+per call. At step17's `(N, K, n_pre, T) = (256, 32, 256, 20_000)`,
+that's ~1.3 billion ops total per training scan. Linear scaling to
+T=10M (Phase 3 target) gives ~650 billion ops on this one op — the
+review flagged it as "will become the primary bottleneck at larger
+N or longer T."
+
+**Why we are not optimizing now:**
+
+1. **Phase 0 profile (2026-04-26):** the training scan is
+   *launch-overhead-bound*, not compute-bound (~15% GPU util on
+   GTX 1050 Mobile; 50 ms total GPU compute / 350 ms wall on a
+   T=2000 reference run). Optimizing compute saves a fraction of
+   what dispatch latency is already eating. Even a pessimistic
+   3× speedup of the choice call ≈ ~1% wall-time reduction at
+   current scales.
+
+2. **Project policy** (`runtime_not_precious` memory entry): the
+   project is willing to spend GPU time for thorough measurements
+   and defers optimization until profile data motivates it. "Days
+   of GPU compute is fine if it makes a claim bulletproof"
+   contradicts speculative optimization without measurement.
+
+3. **Optimization risk:** the Gumbel-max replacement (`argmax(log p +
+   gumbel)`) avoids the cumsum + searchsorted but introduces
+   hand-rolled categorical sampling. Subtle bugs (`log(0)`
+   underflow, argmax tie-breaking) can shift the sampling
+   distribution in ways that don't fail tests but corrupt the
+   experimental signal.
+
+**When to revisit:**
+
+- When Phase 3 (T=10M, N=500) runs hit a wall-time wall and
+  profile data fingers `apply_acquisition` as the bottleneck.
+- Or when any future experiment scales `n_pre` substantially (the
+  log factor in `O(K · log n_pre)` per slot is where this op
+  becomes asymptotically painful).
+- The deferred (c) profile design from the 2026-04-27 cleanup
+  session is documented for re-use: A/B the existing `uniform` vs
+  `hebbian` paths in step17 Config at the same T, measure
+  wall-time delta directly, escalate to TensorBoard trace if the
+  signal is ambiguous.
+
+**Out of scope of this entry but related:** `jax.random.choice(p=...)`
+is also called inside step17 if `pre_id_source="hebbian"` — same code
+path. Any optimization here propagates automatically. The cheap
+counterpart, `pre_id_source="uniform"` via `jax.random.randint`, is
+already O(N · K) with no log factor; that path scales fine.
+
+---
+
+## 2026-04-27 — Deferred: drive-array `(T, N)` pre-allocation in `_build_drives`
+
+Not a measurement; a documented deferral.
+
+**Concern (Gemini final review, 2026-04-27):** Both step16's and
+step17's `_build_drives(n_steps)` pre-allocate the full `(T, N)`
+external-current raster via `jnp.full(...)` and `jnp.concatenate(...)`.
+At T=10M, N=256, each raster is ~10 MB (float32) — small. At
+T=100M, ~100 MB per raster, two rasters per call → 200 MB. At
+T=1B (hypothetical), several GB. The concern: long-T runs run out
+of host memory before they run out of GPU memory.
+
+**Why we are not refactoring now:**
+
+1. **At Phase 3 target (T=10M, N=500):** drive arrays are ~40 MB
+   total. Negligible compared to other state. Not the binding
+   constraint.
+
+2. **The natural refactor is non-trivial:** moving drive generation
+   inside the scan body changes the function-call boundary for the
+   driver pattern (`A_DRIVE_PROFILE` piecewise-constant logic
+   becomes per-step inside the scan rather than precomputed). The
+   refactor is mechanical but touches step16, step17, the test
+   file, and overnight_batch.
+
+3. **Unlike the raster-retention fix from 2026-04-26**, this one
+   doesn't unblock anything currently planned. Phase 3 runs are
+   expected at T=10M, where the drive memory cost is already
+   small.
+
+**When to revisit:**
+
+- When any experiment plans T ≥ 100M (drive arrays exceed 100 MB
+  per side).
+- When a memory-bound regression is profile-attributed to drive
+  pre-allocation rather than to other allocations.
+- The proposed refactor: drop `_build_drives` from the scan input
+  set; reconstruct `i_ext_a_t` and `i_ext_b_t` from `step` (the
+  scan-step counter) inside `scan_step`. `A_DRIVE_PROFILE`
+  selection becomes `A_DRIVE_PROFILE[step // (T // len(profile))]`
+  via dynamic indexing.
+
+---
+
+## 2026-04-27 — Deferred (LOW): `scan_step` recompilation per `_training_scan` call
+
+Verified empirically: ~100 ms compile overhead per call, NOT the
+30–60 minutes Gemini's review claimed.
+
+**Background:** Gemini final review flagged step17's `_training_scan`
+as triggering full JAX recompilation per call because `scan_step` is
+defined as a closure inside the function. Predicted impact: 30–60
+minutes wasted per 500-run batch.
+
+**Empirical verification (2026-04-27, 4 GB GTX 1050 Mobile, T=400):**
+
+| trial | wall-time |
+|------|-----------|
+| 1    | 667.0 ms  |
+| 2    | 570.2 ms  |
+| 3    | 590.9 ms  |
+
+The trial 1 → trial 2 drop is ~100 ms; subsequent trials are flat.
+JAX IS caching the lowered IR across calls; the per-call overhead
+is ~100 ms (trace + dispatch), not full recompilation.
+
+**Per-batch impact:** at 500 runs, ~50 seconds total compile
+overhead — not 30–60 minutes. Gemini's claim was 3 orders of
+magnitude high.
+
+**Why deferring:** the refactor (move `scan_step` to module level,
+plumb `acq_mode` through carry/closure) is real surgery for ~50 s
+savings per batch. The G-3 monkey-patching refactor (#30 in the
+2026-04-27 task list) addresses the same surface for unrelated
+fragility reasons; if that lands, the scan_step structure can be
+revisited as part of the same pass at near-zero marginal cost.
+
+---
+
+## 2026-04-27 — Deferred (Ed-confirmed): G-3 monkey-patching of step16/step17 globals in overnight_batch
+
+Not a measurement; an Ed-confirmed deferral.
+
+**Concern (Gemini final review, 2026-04-27):** `experiments/overnight_batch.py`
+mutates module-level globals in `step16_stdp_learning` and
+`step17_structural_growth` via `try/finally` patterns to vary run
+parameters. Examples:
+
+- `_strong_op_run`: monkey-patches `s17.PLASTICITY_RATE` and
+  `s17.INIT_V_MEAN`.
+- `_long_training_run`: monkey-patches `s17.N_TRAIN_STEPS` (and the
+  symmetric `s16.N_TRAIN_STEPS` path).
+- `_acq_prob_stochastic_sweep`: monkey-patches `s17.ACQ_PROB_STOCHASTIC`.
+
+The pattern is fragile under any concurrency (signal handlers,
+parallel runs, pytest collection) and obscures the actual parameter
+set per run from anyone reading the code.
+
+**Why deferring (Ed-confirmed, 2026-04-27):** "Monkey patching is
+fine for now." The current overnight batch runs are sequential and
+single-process, so the concurrency risk doesn't bite. The proper
+refactor (plumb all variable parameters through `Config` /
+explicit function arguments) is real medium-scope surgery —
+worth doing eventually but not blocking any current experiment.
+
+**When to revisit:**
+
+- If overnight batches ever run in parallel (multi-process or
+  multi-thread): the monkey-patches will race and produce wrong
+  results silently. That's the trigger to refactor.
+- If a future experiment wants to vary a parameter that's not
+  currently monkey-patchable cleanly (e.g., a deeply-nested config
+  field), that becomes the natural moment to do the broader plumbing.
+- If `_run_config` / `_step16_once` ever need to be JIT-compiled
+  themselves (currently they're Python functions wrapping JAX scan
+  calls): monkey-patching breaks under jit because globals are
+  baked in at trace time. Trace cost would be paid before any
+  patch took effect.
+
+**Proposed refactor when the time comes:**
+
+1. Extend `Config` (or add a sibling `RunConfig`) with the variable
+   fields: `plasticity_rate`, `init_v_mean`, `init_v_std`,
+   `n_train_steps`, `n_measure_steps`, `acq_prob_stochastic`, etc.
+2. `_run_config` and `_step16_once` take this expanded config and
+   stop reading module globals.
+3. overnight_batch's `_strong_op_run` etc. construct the config
+   with the desired values and pass it down — no monkey-patching.
+4. Module-level constants in step16/step17 become defaults
+   (used when no config field overrides them) or simply demoted
+   to test fixtures.
+
+The change would touch step16, step17, overnight_batch, and a few
+test files. Bounded but real.

@@ -136,12 +136,17 @@ def _modulate_tau_m_scale(
     Precondition: adrenaline > 0. Division by a non-positive adrenaline
     produces inf or a negative effective tau, which flips the leak
     term's sign in `integrate_and_spike` and silently corrupts the
-    dynamics (no NaN, no exception). Callers are responsible for
-    keeping adrenaline > 0 under this gain_mode; biological plausibility
-    aligns with this precondition (adrenaline levels are non-negative).
+    dynamics (no NaN, no exception). The defensive `jnp.maximum`
+    floor below caps the failure mode at "tau_eff is very large"
+    (very slow membrane) rather than negative; biological adrenaline
+    is non-negative anyway. Current callers route through the closed-
+    loop controller whose `clip_min` is 0.5 > 0, so this guard never
+    fires under normal operation but protects against future
+    misconfiguration.
     """
     del dt_ms
-    return base_i_total, jnp.asarray(tau_m_ms) / adrenaline
+    safe_adr = jnp.maximum(adrenaline, jnp.float32(1e-6))
+    return base_i_total, jnp.asarray(tau_m_ms) / safe_adr
 
 
 def _modulate_threshold_shift(

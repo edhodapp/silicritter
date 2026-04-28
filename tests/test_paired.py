@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from silicritter.lif import LIFState
 from silicritter.paired import (
     PairedState,
+    cross_e_partner_mask,
     init_paired_state,
     make_pool_for_partner,
     simulate_paired,
@@ -226,9 +227,11 @@ def test_step_paired_ei_substrate_changes_synaptic_current() -> None:
     )
     # Make B's slots all bind to A-side (indices n..2n) so the A-spike
     # signal clearly drives B's synaptic input.
-    n_pre = 2 * n
-    cross_pre_ids = jnp.full((n, k), n, dtype=jnp.int32)
-    _ = n_pre  # suppress lint
+    # Bind every B slot to A-neuron 2 (an I-neuron under the
+    # convention "last 50% inhibitory at n=4"), which IS firing
+    # under spikes_a_forced. That makes B's synaptic current
+    # depend visibly on whether E/I-handling is enabled.
+    cross_pre_ids = jnp.full((n, k), n + 2, dtype=jnp.int32)
     pool_b_cross = SlotPool(
         pre_ids=cross_pre_ids,
         v=jnp.full((n, k), 0.3, dtype=jnp.float32),
@@ -243,62 +246,183 @@ def test_step_paired_ei_substrate_changes_synaptic_current() -> None:
 
     stdp_params = default_params()
     zero_vec = jnp.zeros((n,), dtype=jnp.float32)
-    # Reference run: no E/I.
-    nxt_no_ei = step_paired(
-        state,
-        i_ext_a=zero_vec, i_ext_b=zero_vec,
-        valence_a=jnp.float32(0.0), valence_b=jnp.float32(0.0),
-        adrenaline_a=jnp.float32(1.0), adrenaline_b=jnp.float32(1.0),
-        stdp_params=stdp_params,
-    )
-    # E/I run: A has last 50% inhibitory (so all firing A-neurons
-    # are I), B is all-excitatory.
     a_is_inh = jnp.array([False, False, True, True], dtype=jnp.bool_)
     b_is_inh = jnp.zeros((n,), dtype=jnp.bool_)
+    # Reference run: no E/I substrate. A's I-neuron contributes
+    # positively to B's synaptic current (E behavior).
+    nxt_no_ei = step_paired(
+        state,
+        i_ext_a=zero_vec, i_ext_b=zero_vec,
+        valence_a=jnp.float32(0.0), valence_b=jnp.float32(0.0),
+        adrenaline_b=jnp.float32(1.0),
+        stdp_params=stdp_params,
+    )
+    # E/I run: A's I-neuron's contribution flips sign and scales by 4x.
     nxt_with_ei = step_paired(
         state,
         i_ext_a=zero_vec, i_ext_b=zero_vec,
         valence_a=jnp.float32(0.0), valence_b=jnp.float32(0.0),
-        adrenaline_a=jnp.float32(1.0), adrenaline_b=jnp.float32(1.0),
+        adrenaline_b=jnp.float32(1.0),
         stdp_params=stdp_params,
         a_is_inhibitory=a_is_inh,
         b_is_inhibitory=b_is_inh,
         i_weight_multiplier=4.0,
     )
-    # No-EI run: B's neuron 0 receives positive synaptic current
-    # (A neurons 2,3 firing, K=2 slots bound to pre=n (A neuron 0,
-    # not firing), wait -- let me re-check. Slots bind to pre=n,
-    # which is A-neuron 0. A-neuron 0 is NOT firing (only 2,3 are).
-    # So I need slots bound to firing A-neurons.
-    # Rebinding: bind to pre=n+2 (A-neuron 2, which IS firing).
-    cross_pre_ids_firing = jnp.full((n, k), n + 2, dtype=jnp.int32)
-    pool_b_firing = pool_b_cross._replace(pre_ids=cross_pre_ids_firing)
-    state_firing = PairedState(
-        a=state.a,
-        b=state.b._replace(pool=pool_b_firing),
-    )
-    nxt_no_ei = step_paired(
-        state_firing,
-        i_ext_a=zero_vec, i_ext_b=zero_vec,
-        valence_a=jnp.float32(0.0), valence_b=jnp.float32(0.0),
-        adrenaline_a=jnp.float32(1.0), adrenaline_b=jnp.float32(1.0),
-        stdp_params=stdp_params,
-    )
-    nxt_with_ei = step_paired(
-        state_firing,
-        i_ext_a=zero_vec, i_ext_b=zero_vec,
-        valence_a=jnp.float32(0.0), valence_b=jnp.float32(0.0),
-        adrenaline_a=jnp.float32(1.0), adrenaline_b=jnp.float32(1.0),
-        stdp_params=stdp_params,
-        a_is_inhibitory=a_is_inh,
-        b_is_inhibitory=b_is_inh,
-        i_weight_multiplier=4.0,
-    )
-    # A-neuron 2 (the pre for every B slot) is inhibitory, so with
-    # E/I enabled, B's synaptic input flips sign and scales by 4x.
-    # V after one step: no-E/I gets positive dV, E/I gets negative
-    # (V goes further below rest, or less above).
+    # V after one step: no-E/I gets positive dV (A-neuron 2 fires +
+    # treated as E), E/I gets negative dV (same fire + treated as I).
     assert float(nxt_no_ei.b.lif.v[0]) > float(nxt_with_ei.b.lif.v[0])
+
+
+def test_step_paired_partial_ei_a_only_raises_value_error() -> None:
+    """Partial E/I (a set, b None) must fail loudly, not silently degrade.
+
+    Previous behavior: `_combine_ei_if_set` returned None when either
+    side was None, silently treating the whole pair as having no E/I
+    info. This hides programmer mistakes (forgot to thread one of the
+    masks through). The contract is now: pass both masks or neither;
+    partial E/I raises ValueError with a debug-useful message.
+    """
+    import pytest  # pylint: disable=import-outside-toplevel
+    n = 4
+    k = 2
+    state = init_paired_state(n, k, jax.random.PRNGKey(0))
+    stdp_params = default_params()
+    zero_vec = jnp.zeros((n,), dtype=jnp.float32)
+    a_is_inh = jnp.array([False, False, True, True], dtype=jnp.bool_)
+
+    with pytest.raises(ValueError) as exc_info:
+        step_paired(
+            state,
+            i_ext_a=zero_vec, i_ext_b=zero_vec,
+            valence_a=jnp.float32(0.0), valence_b=jnp.float32(0.0),
+            adrenaline_a=jnp.float32(1.0), adrenaline_b=jnp.float32(1.0),
+            stdp_params=stdp_params,
+            a_is_inhibitory=a_is_inh,
+            b_is_inhibitory=None,
+        )
+    msg = str(exc_info.value)
+    # Error message must name the SUPPLIED side (so the user can find
+    # the call in their config). Catches a regression where the
+    # message drops the supplied-side name.
+    assert "a_is_inhibitory" in msg, (
+        f"error message must name the supplied side; got: {msg!r}"
+    )
+    # Error message must name the MISSING side (so the user knows
+    # what to add).
+    assert "b_is_inhibitory" in msg, (
+        f"error message must name the missing side; got: {msg!r}"
+    )
+    # Error message must direct the fix.
+    assert "both" in msg.lower() or "neither" in msg.lower(), (
+        f"error message must direct user to pass both or neither; "
+        f"got: {msg!r}"
+    )
+
+
+def test_step_paired_partial_ei_b_only_raises_value_error() -> None:
+    """Partial E/I (b set, a None): symmetric case must also raise."""
+    import pytest  # pylint: disable=import-outside-toplevel
+    n = 4
+    k = 2
+    state = init_paired_state(n, k, jax.random.PRNGKey(0))
+    stdp_params = default_params()
+    zero_vec = jnp.zeros((n,), dtype=jnp.float32)
+    b_is_inh = jnp.array([False, False, True, True], dtype=jnp.bool_)
+
+    with pytest.raises(ValueError) as exc_info:
+        step_paired(
+            state,
+            i_ext_a=zero_vec, i_ext_b=zero_vec,
+            valence_a=jnp.float32(0.0), valence_b=jnp.float32(0.0),
+            adrenaline_a=jnp.float32(1.0), adrenaline_b=jnp.float32(1.0),
+            stdp_params=stdp_params,
+            a_is_inhibitory=None,
+            b_is_inhibitory=b_is_inh,
+        )
+    msg = str(exc_info.value)
+    # Both sides named (supplied + missing) for debug completeness.
+    assert "b_is_inhibitory" in msg, (
+        f"error message must name the supplied side; got: {msg!r}"
+    )
+    assert "a_is_inhibitory" in msg, (
+        f"error message must name the missing side; got: {msg!r}"
+    )
+    assert "both" in msg.lower() or "neither" in msg.lower(), (
+        f"error message must direct user to pass both or neither; "
+        f"got: {msg!r}"
+    )
+
+
+def test_step_paired_adrenaline_a_default_is_one() -> None:
+    """step_paired's `adrenaline_a` defaults to 1.0 (no gain modulation).
+
+    Most experiments run agent A open-loop while only B is under
+    closed-loop adrenaline control. Forcing every callsite to pass
+    `adrenaline_a=jnp.float32(1.0)` is busywork that hides the
+    "open-loop" intent in plumbing. The default makes the open-loop
+    case the silent case.
+
+    Contract pinned: omitting `adrenaline_a` produces the same result
+    as explicitly passing `1.0`.
+    """
+    n = 4
+    k = 2
+    state = init_paired_state(n, k, jax.random.PRNGKey(7))
+    stdp_params = default_params()
+    zero_vec = jnp.zeros((n,), dtype=jnp.float32)
+    common_kwargs = {
+        "i_ext_a": zero_vec, "i_ext_b": zero_vec,
+        "valence_a": jnp.float32(0.0),
+        "valence_b": jnp.float32(0.0),
+        "adrenaline_b": jnp.float32(1.0),
+        "stdp_params": stdp_params,
+    }
+    nxt_default = step_paired(state, **common_kwargs)
+    nxt_explicit = step_paired(
+        state, **common_kwargs, adrenaline_a=jnp.float32(1.0),
+    )
+    # Same input, default vs explicit-1.0 — outputs must match exactly.
+    assert jnp.array_equal(nxt_default.a.lif.v, nxt_explicit.a.lif.v), (
+        "step_paired's adrenaline_a default must equal 1.0; "
+        "outputs differ from explicit 1.0 call"
+    )
+    assert jnp.array_equal(nxt_default.b.lif.v, nxt_explicit.b.lif.v)
+
+
+def test_cross_e_partner_mask_classifies_correctly() -> None:
+    """`cross_e_partner_mask` marks True iff slot is cross AND points to E.
+
+    Constructs a 4-slot pool with pre_ids spanning the [own, partner]
+    raster boundary, plus a partner_is_inh that picks out specific
+    indices as I-neurons. Asserts the mask is True only for slots
+    whose pre_id is in [n_own, 2*n_own) AND whose partner index is E
+    (partner_is_inh[partner_idx] is False).
+    """
+    n_own = 4
+    # pool.pre_ids: slot 0 self-recurrent E target, slot 1 self I,
+    # slot 2 cross-partner E (partner index 0), slot 3 cross-partner
+    # I (partner index 2). With partner_is_inh = [F, F, T, F]:
+    #   slot 0: pre=1 (self), cross_mask False -> result False
+    #   slot 1: pre=2 (self), cross_mask False -> result False
+    #   slot 2: pre=4 (=n_own+0), cross True, partner_is_inh[0]=F -> True
+    #   slot 3: pre=6 (=n_own+2), cross True, partner_is_inh[2]=T -> False
+    pre_ids = jnp.array([[1, 2, 4, 6]], dtype=jnp.int32)
+    pool = SlotPool(
+        pre_ids=pre_ids,
+        v=jnp.full((1, 4), 0.5, dtype=jnp.float32),
+        plasticity_rate=jnp.ones((1, 4), dtype=jnp.float32),
+        active=jnp.ones((1, 4), dtype=jnp.bool_),
+        release_counter=jnp.zeros((1, 4), dtype=jnp.int32),
+    )
+    partner_is_inh = jnp.array(
+        [False, False, True, False], dtype=jnp.bool_,
+    )
+    mask = cross_e_partner_mask(pool, n_own, partner_is_inh)
+    assert mask.shape == pre_ids.shape
+    assert not bool(mask[0, 0]), "self-recurrent E target must not be cross-E"
+    assert not bool(mask[0, 1]), "self-recurrent I target must not be cross-E"
+    assert bool(mask[0, 2]), "cross to partner E must be True"
+    assert not bool(mask[0, 3]), "cross to partner I must be False"
 
 
 def test_step_paired_compatible_with_structural_release() -> None:

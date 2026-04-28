@@ -370,3 +370,65 @@ i_mult in ways neither the step 9 nor step 13 sweeps probed.
 about biology. Expect this point to drift again as the substrate
 evolves (recurrent growth, inhibitory STDP, learned plasticity
 rates), and plan for further supersession.
+
+## 2026-04-27
+
+### D009: Valence is computed from previous-step controller EMA (causal three-factor STDP gating)
+
+In the closed-loop training scans of step 16 and step 17, the
+valence signal that gates B's STDP update at step `t` is computed
+from controller EMA state through step `t-1`, BEFORE the step-`t`
+spike is generated. Concretely:
+
+```
+error_prev = ctrl.rate_a_ema - ctrl.rate_b_ema   # EMA through t-1
+valence_b  = max(0, 1 - |error_prev| / VALENCE_SCALE)
+next_state = step_paired(..., valence_b=valence_b, ...)  # generates spike t,
+                                                          # applies STDP gated
+                                                          # by valence_b
+# THEN update EMA with step-t spike, compute step-t adrenaline, etc.
+```
+
+**Why this is the only causal choice.** STDP at step `t` modulates
+weights based on a trace product that includes the just-generated
+step-`t` spike. The reward signal applied to that update must be
+derivable from information available **before** step-`t` spikes
+exist. Using a post-step EMA for valence would gate the step-`t`
+weight update with controller state that already includes step-`t`
+spikes — i.e., reward shaped by the action it is reinforcing. That
+is anti-causal and would produce a circular feedback loop in the
+learning signal.
+
+**The "1-step lag" framing is misleading.** A surface reading is
+that valence "lags" the action by one step. But the EMA decay is
+0.98 → time constant ~50 steps, so the EMA itself averages over
+~50 steps of spike history. The explicit one-step offset between
+"reward derived from EMA-through-t-1" and "STDP applied at step t"
+is dwarfed by the EMA's intrinsic averaging window. There is no
+precision lost relative to the alternative; the alternative
+violates causality.
+
+**Biological grounding.** Real three-factor STDP has the same
+structure: eligibility traces are slow (~1 s) compared to spike
+events (~ms), and dopaminergic modulator bursts arrive after the
+action. The eligibility trace at the moment of reward integrates
+correlations from before the reward was observed. silicritter's
+discrete-time scan body collapses this to a one-step offset, but
+the topology is the same.
+
+**What this rules out.** Any future refactor that "fixes" the
+apparent lag by computing valence after the EMA update is wrong
+and must be rejected. If a future architecture has reason to
+delay STDP application by one step (so step-`t+1` STDP uses
+step-`t` valence and step-`t` traces), that's a separate design
+choice with its own tradeoffs — but it is not "less lagged" than
+the current code; it just shifts which step's traces and reward
+are being aligned.
+
+**Why this entry exists.** Multiple independent code reviews
+(Gemini-3 on 2026-04-26) flagged the apparent lag as a possible
+precision issue. The framing keeps recurring because surface
+inspection of `error_prev` makes the offset look incidental rather
+than structural. This entry exists so the rationale is durable and
+the finding can be closed by reference rather than re-derived from
+scratch each time.

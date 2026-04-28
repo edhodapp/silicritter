@@ -60,6 +60,7 @@ from silicritter.closedloop import (
 from silicritter.lif import init_state
 from silicritter.paired import (
     PairedState,
+    cross_e_partner_mask,
     make_pool_for_partner,
     step_paired,
 )
@@ -81,6 +82,12 @@ B_TONIC_MV: float = 16.0
 INHIBITORY_FRACTION: float = 0.2
 I_WEIGHT_MULTIPLIER: float = 8.0  # D008
 
+# Partner (A) pool seed. Held fixed across all B-seed sweeps so fitness
+# differences attribute to B's learning, not partner-substrate
+# variation. Cross-partner robustness is a separate experimental
+# design (vary this seed independently from B's seed).
+PARTNER_SEED: int = 777
+
 CONTROLLER_DECAY: float = 0.98
 BASELINE_ADRENALINE: float = 1.0
 CLOSED_LOOP_GAIN: float = 50.0
@@ -95,10 +102,13 @@ N_TRAIN_STEPS: int = 20_000
 # Random B pool: v drawn from truncated Gaussian(mean, std) in [0, V_MAX].
 INIT_V_MEAN: float = 1.0
 INIT_V_STD: float = 0.3
-# STDP learning rate. If dv/spike ~ plasticity_rate * a_plus ~ 0.01 *
-# plasticity, want accumulated change over 20k steps to be
-# meaningful relative to v_max=2.
-PLASTICITY_RATE_TRAIN: float = 0.01
+# STDP learning rate. Pre-sweep derivation suggested 0.01 would
+# produce "meaningful" accumulated weight change over 20k steps
+# (dv/spike ~ plasticity_rate * a_plus * spikes); empirically that
+# rate sat in the noise regime. The rate sweep (README dev log
+# 2026-04-23) showed learning emerges at >= 0.3 with the headline
+# +14% result at 1.0. Default reflects the empirical working rate.
+PLASTICITY_RATE_TRAIN: float = 1.0
 
 # Valence: rate error at which reward drops to zero. A and B fire
 # at ~0.03-0.05 spike/step (30-50 Hz); error of 0.02 is "substantial
@@ -150,7 +160,7 @@ def _random_b_pool(
 
 def _build_state(pool_b: SlotPool) -> PairedState:
     pool_a = make_pool_for_partner(
-        N_NEURONS, K_SLOTS, jax.random.PRNGKey(777)
+        N_NEURONS, K_SLOTS, jax.random.PRNGKey(PARTNER_SEED)
     )
     return PairedState(
         a=PlasticNetState(
@@ -168,8 +178,12 @@ def _build_state(pool_b: SlotPool) -> PairedState:
 
 def _build_drives(
     n_steps: int,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """A drive (piecewise-constant), B tonic drive, A adrenaline."""
+) -> tuple[jax.Array, jax.Array]:
+    """A drive (piecewise-constant) and B tonic drive.
+
+    A runs open-loop, so `adrenaline_a` is not threaded through —
+    `step_paired` defaults `adrenaline_a` to ADRENALINE_OPEN_LOOP.
+    """
     assert n_steps % len(A_DRIVE_PROFILE) == 0, (
         f"n_steps={n_steps} must be divisible by "
         f"{len(A_DRIVE_PROFILE)} segments"
@@ -184,8 +198,7 @@ def _build_drives(
     i_ext_b = jnp.full(
         (n_steps, N_NEURONS), B_TONIC_MV, dtype=jnp.float32,
     )
-    adrenaline_a = jnp.ones((n_steps,), dtype=jnp.float32)
-    return i_ext_a, i_ext_b, adrenaline_a
+    return i_ext_a, i_ext_b
 
 
 def _training_scan(
@@ -194,26 +207,32 @@ def _training_scan(
     b_is_inh: jax.Array,
     i_ext_a: jax.Array,
     i_ext_b: jax.Array,
-    adrenaline_a: jax.Array,
 ) -> tuple[PairedState, jax.Array, jax.Array, jax.Array]:
-    """Closed-loop adrenaline + valence-gated STDP, single scan."""
+    """Closed-loop adrenaline + valence-gated STDP, single scan.
+
+    Returns per-step scalar mean rates rather than (T, N_NEURONS) spike
+    rasters: at T=10M with N_NEURONS=256 the rasters would be ~5 GB and
+    exceed the 4 GB GPU ceiling. Callers only need global means anyway.
+    """
     stdp = _stdp_params()
     ctrl_p = _ctrl_params()
 
     def scan_step(
         carry: tuple[PairedState, ControllerState],
-        drive: tuple[jax.Array, jax.Array, jax.Array],
+        drive: tuple[jax.Array, jax.Array],
     ) -> tuple[
         tuple[PairedState, ControllerState],
         tuple[jax.Array, jax.Array, jax.Array],
     ]:
         state, ctrl = carry
-        i_ext_a_t, i_ext_b_t, adr_a_t = drive
-        # A runs open-loop (adrenaline_a = 1.0 for all t); only B is
-        # under closed-loop adrenaline control. The adr_a_t parameter
-        # is kept for future experiments where A might also be
-        # modulated.
-        # Valence uses previous-step EMA (causal).
+        i_ext_a_t, i_ext_b_t = drive
+        # A runs open-loop: step_paired's `adrenaline_a` defaults to
+        # ADRENALINE_OPEN_LOOP (1.0), so we omit it here. Only B is
+        # under closed-loop adrenaline control.
+        # Causal: valence at step t reflects controller state through
+        # t-1, since step-t spikes haven't happened yet when STDP
+        # needs the modulator. The 1-step offset is dominated by the
+        # EMA's intrinsic ~50-step averaging window. See D009.
         error_prev = ctrl.rate_a_ema - ctrl.rate_b_ema
         valence_b = jnp.maximum(
             jnp.float32(0.0),
@@ -224,7 +243,6 @@ def _training_scan(
             i_ext_a=i_ext_a_t, i_ext_b=i_ext_b_t,
             valence_a=jnp.float32(0.0),
             valence_b=valence_b,
-            adrenaline_a=adr_a_t,
             adrenaline_b=ctrl.adrenaline_b,
             stdp_params=stdp,
             gain_mode="tau_m_scale",
@@ -253,19 +271,15 @@ def _training_scan(
             jnp.float32(ctrl_p.adr_max),
         )
         next_ctrl = ControllerState(new_rate_a, new_rate_b, new_adr)
-        return (next_state, next_ctrl), (
-            next_state.b.lif.spikes,
-            next_state.a.lif.spikes,
-            valence_b,
-        )
+        return (next_state, next_ctrl), (rate_a, rate_b, valence_b)
 
     initial_ctrl = init_controller(ctrl_p.baseline)
-    (final_state, _), (spikes_b, spikes_a, val_trace) = jax.lax.scan(
+    (final_state, _), (rate_a_trace, rate_b_trace, val_trace) = jax.lax.scan(
         scan_step,
         (initial_state, initial_ctrl),
-        (i_ext_a, i_ext_b, adrenaline_a),
+        (i_ext_a, i_ext_b),
     )
-    return final_state, spikes_a, spikes_b, val_trace
+    return final_state, rate_a_trace, rate_b_trace, val_trace
 
 
 def _measure_fitness(
@@ -273,17 +287,20 @@ def _measure_fitness(
     a_is_inh: jax.Array,
     b_is_inh: jax.Array,
     n_steps: int,
-) -> tuple[float, jax.Array, jax.Array]:
+) -> float:
     """Plasticity-frozen closed-loop measurement over n_steps."""
     frozen = pool_b._replace(
         plasticity_rate=jnp.zeros_like(pool_b.plasticity_rate),
     )
     state = _build_state(frozen)
-    i_ext_a, i_ext_b, adr_a = _build_drives(n_steps)
+    i_ext_a, i_ext_b = _build_drives(n_steps)
     val_zero = jnp.zeros((n_steps,), dtype=jnp.float32)
+    # simulate_closedloop (separate controller helper) still requires
+    # an adrenaline_a trace; A is open-loop so we pass jnp.ones.
+    adr_a_open = jnp.ones((n_steps,), dtype=jnp.float32)
     spikes_a, spikes_b, _ = simulate_closedloop(
         state, _ctrl_params(),
-        i_ext_a, i_ext_b, val_zero, val_zero, adr_a,
+        i_ext_a, i_ext_b, val_zero, val_zero, adr_a_open,
         _stdp_params(),
         gain_mode="tau_m_scale",
         a_is_inhibitory=a_is_inh,
@@ -301,20 +318,24 @@ def _measure_fitness(
     b_rate = spikes_b.astype(jnp.float32).reshape(
         n_windows, WINDOW_STEPS, N_NEURONS
     ).mean(axis=(1, 2))
-    fit = float(-jnp.mean((b_rate[:-1] - a_rate[1:]) ** 2))
-    return fit, spikes_a, spikes_b
+    # Fitness = -MSE of (B_k predicting A_{k+1}); 1-window prediction
+    # lag. Higher (less negative) is better.
+    return float(-jnp.mean((b_rate[:-1] - a_rate[1:]) ** 2))
 
 
-def _describe_pool(pool: SlotPool) -> dict[str, float]:
-    """Summary stats for the B pool."""
+def _describe_pool(
+    pool: SlotPool, a_is_inh: jax.Array,
+) -> dict[str, float]:
+    """Summary stats for the B pool.
+
+    `a_is_inh` is the partner's E/I identity mask, used to classify
+    cross-substrate slots without re-deriving `assign_ei_identity`'s
+    layout invariant here.
+    """
     v = pool.v
     total = v.size
-    n_ex = N_NEURONS - int(N_NEURONS * INHIBITORY_FRACTION)
     cross_mask = pool.pre_ids >= N_NEURONS
-    cross_e_mask = (
-        (pool.pre_ids >= N_NEURONS)
-        & (pool.pre_ids < N_NEURONS + n_ex)
-    )
+    cross_e_mask = cross_e_partner_mask(pool, N_NEURONS, a_is_inh)
     at_max = v >= V_MAX - 1e-4
     at_min = v <= 1e-4
     return {
@@ -367,12 +388,12 @@ def run(
     pool_b0 = _random_b_pool(
         seed + 1, plasticity_rate, init_v_mean, init_v_std,
     )
-    stats_initial = _describe_pool(pool_b0)
+    stats_initial = _describe_pool(pool_b0, a_is_inh)
     print(f"initial pool: {_fmt_pool(stats_initial)}")
 
     # Phase A: pre-training fitness.
     t0 = time.perf_counter()
-    fit_before, _, _ = _measure_fitness(
+    fit_before = _measure_fitness(
         pool_b0, a_is_inh, b_is_inh, N_MEASURE_STEPS,
     )
     print(f"Phase A (pre-training fitness):  {fit_before:.3e} "
@@ -381,12 +402,13 @@ def run(
     # Phase B: run the training scan.
     print(f"Phase B: training for {N_TRAIN_STEPS} steps...")
     state0 = _build_state(pool_b0)
-    i_ext_a, i_ext_b, adr_a = _build_drives(N_TRAIN_STEPS)
+    i_ext_a, i_ext_b = _build_drives(N_TRAIN_STEPS)
     t0 = time.perf_counter()
-    final_state, spikes_a, spikes_b, val_trace = _training_scan(
-        state0, a_is_inh, b_is_inh, i_ext_a, i_ext_b, adr_a,
+    final_state, rate_a_trace, rate_b_trace, val_trace = _training_scan(
+        state0, a_is_inh, b_is_inh, i_ext_a, i_ext_b,
     )
-    jax.block_until_ready(final_state.b.pool.v)
+    jax.block_until_ready(  # type: ignore[no-untyped-call]
+        final_state.b.pool.v)
     dt_train = time.perf_counter() - t0
     print(
         f"  train time: {dt_train:.1f}s "
@@ -396,8 +418,8 @@ def run(
     val_mean = float(val_trace.mean())
     val_min = float(val_trace.min())
     val_max = float(val_trace.max())
-    a_rate_hz = float(spikes_a.astype(jnp.float32).mean()) * 1000.0
-    b_rate_hz = float(spikes_b.astype(jnp.float32).mean()) * 1000.0
+    a_rate_hz = float(rate_a_trace.mean()) * 1000.0
+    b_rate_hz = float(rate_b_trace.mean()) * 1000.0
     print(
         f"  valence during training: "
         f"mean={val_mean:.3f}, min={val_min:.3f}, max={val_max:.3f}"
@@ -408,12 +430,12 @@ def run(
     )
 
     trained_pool = final_state.b.pool
-    stats_trained = _describe_pool(trained_pool)
+    stats_trained = _describe_pool(trained_pool, a_is_inh)
     print(f"trained pool: {_fmt_pool(stats_trained)}")
 
     # Phase C: post-training fitness.
     t0 = time.perf_counter()
-    fit_after, _, _ = _measure_fitness(
+    fit_after = _measure_fitness(
         trained_pool, a_is_inh, b_is_inh, N_MEASURE_STEPS,
     )
     print(f"Phase C (post-training fitness): {fit_after:.3e} "

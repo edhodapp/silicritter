@@ -173,6 +173,85 @@ def test_ltp_from_pretrace_and_postspike() -> None:
     assert abs(actual_dv - expected_dv) < 1e-6
 
 
+def test_inactive_slots_are_frozen_under_full_stdp_drive() -> None:
+    """Inactive slots have dv=0 even under conditions that would maximize dv.
+
+    The `active` mask in the STDP update is the contract that "freed
+    slots don't drift before being rebound" — essential for the
+    slot-release/acquisition pattern. Without the mask, an inactive
+    slot still bound to its old pre_id would accumulate dv from any
+    pre/post correlation, so re-binding to a new pre via acquisition
+    would inherit phantom weight history.
+
+    Setup: two cells, each with one slot bound to pre=0 with high
+    plasticity_rate and a built-up pre_trace. Post=0 gets active=True;
+    Post=1 gets active=False. Both cells fire (i_ext drives spike),
+    so both slots see the same potential dv from pre*post correlation.
+    Active slot's v changes; inactive slot's v must not.
+    """
+    pre_ids = jnp.array([[0], [0]], dtype=jnp.int32)
+    # v_init below v_max=0.5 so LTP has room to be observable;
+    # otherwise jnp.clip would zero out dv even with the mask removed.
+    v_init = jnp.array([[0.2], [0.2]], dtype=jnp.float32)
+    pool = _pool_with(
+        pre_ids=pre_ids,
+        v=v_init,
+        # High plasticity_rate on BOTH slots: this isolates the
+        # `active` mask from the plasticity_rate gate. If the mask
+        # were removed, the inactive slot would still accumulate dv.
+        plasticity_rate=jnp.ones_like(v_init),
+        # One active, one inactive.
+        active=jnp.array([[True], [False]], dtype=jnp.bool_),
+    )
+    # Both cells just below threshold; high i_ext will push both to fire.
+    lif = LIFState(
+        v=jnp.array([-51.0, -51.0], dtype=jnp.float32),
+        spikes=jnp.array([False, False], dtype=jnp.bool_),
+    )
+    # Built-up pre_trace at pre=0 from earlier activity — this is the
+    # ingredient that drives potential LTP on both slots.
+    traces = Traces(
+        pre=jnp.array([0.9, 0.0], dtype=jnp.float32),
+        post=jnp.zeros((2,), dtype=jnp.float32),
+    )
+    state = PlasticNetState(lif=lif, pool=pool, traces=traces)
+    params = default_params()
+
+    nxt = step_plastic(
+        state,
+        i_ext=jnp.array([50.0, 50.0], dtype=jnp.float32),
+        valence=jnp.float32(1.0),
+        adrenaline=jnp.float32(1.0),
+        params=params,
+    )
+
+    # Sanity: both cells fired this step (so both slots saw the
+    # post-spike condition that would have driven LTP).
+    assert bool(nxt.lif.spikes[0]), (
+        "active-cell post=0 must fire to validate the test premise"
+    )
+    assert bool(nxt.lif.spikes[1]), (
+        "inactive-cell post=1 must fire to validate the test premise"
+    )
+
+    # Active slot: v should change (LTP from pre_trace * post_spike).
+    active_dv = float(nxt.pool.v[0, 0] - v_init[0, 0])
+    assert active_dv > 1e-6, (
+        f"active slot must accumulate dv under full STDP drive; "
+        f"got dv={active_dv} (test premise broken if this fails)"
+    )
+
+    # Inactive slot: v MUST stay frozen. This is the contract being
+    # pinned. Without the `active` mask in plasticity.py, this slot
+    # would also accumulate dv (same magnitude as the active one),
+    # and the assertion would fail.
+    inactive_v_unchanged = float(nxt.pool.v[1, 0])
+    assert inactive_v_unchanged == float(v_init[1, 0]), (
+        f"inactive slot v must not change (active mask contract); "
+        f"started at {float(v_init[1, 0])}, got {inactive_v_unchanged}"
+    )
+
+
 def test_ltd_decreases_weight_when_post_leads_pre() -> None:
     """Post trace is high; a pre spike causes LTD (negative dv)."""
     # Slot at post=0, k=0 is bound to pre=1. We want pre=1 to spike this

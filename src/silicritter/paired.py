@@ -55,6 +55,12 @@ from silicritter.plasticity import (
 from silicritter.slotpool import SlotPool, init_random, synaptic_current
 from silicritter.structural import StructuralParams, apply_release
 
+# Default `adrenaline_a` for `step_paired`: scalar 1.0 means "no gain
+# modulation" — agent A runs open-loop. Most experiments keep A
+# open-loop and only modulate B; this sentinel makes the open-loop
+# case the silent default.
+ADRENALINE_OPEN_LOOP: jax.Array = jnp.float32(1.0)
+
 
 class PairedState(NamedTuple):
     """Two paired-agent PlasticNetStates.
@@ -162,14 +168,87 @@ def _apply_agent_plasticity(
     return PlasticNetState(lif=new_lif, pool=new_pool, traces=new_traces)
 
 
+def cross_e_partner_mask(
+    pool: SlotPool,
+    n_own: int,
+    partner_is_inh: jax.Array,
+) -> jax.Array:
+    """Boolean mask: which slots in `pool` point to E neurons in the partner.
+
+    A slot is "cross-E" iff (a) its pre_id indexes into the partner
+    substrate (`pre_id >= n_own`, where pre_ids occupy the combined
+    `[own, partner]` raster of length `2 * n_own`), AND (b) the partner
+    neuron at that index is excitatory (`~partner_is_inh[partner_idx]`).
+
+    Used by both step16's pool-summary diagnostic and step17's per-run
+    metrics. Centralized here so the classification logic stays
+    consistent across experiments — a future refactor of the rule (e.g.
+    if slot pre_ids ever encode something other than indices) only
+    needs to land here.
+
+    Args:
+        pool: SlotPool whose pre_ids span `[0, 2 * n_own)`.
+        n_own: own-agent population size; pre_ids in `[0, n_own)` are
+            self-recurrent, in `[n_own, 2 * n_own)` are cross to the
+            partner.
+        partner_is_inh: boolean mask of length `n_own` marking which
+            partner neurons are inhibitory (True) vs excitatory (False).
+
+    Returns:
+        Boolean array shaped like `pool.pre_ids`, True where the slot
+        is cross-substrate AND points to a partner E neuron.
+    """
+    cross_mask = pool.pre_ids >= n_own
+    # Safe lookup: where !cross, partner_idx is 0 (lookup result is
+    # masked out by cross_mask anyway).
+    partner_idx = jnp.where(cross_mask, pool.pre_ids - n_own, 0)
+    return cross_mask & ~partner_is_inh[partner_idx]
+
+
+def _validate_paired_ei(
+    a_is_inh: jax.Array | None,
+    b_is_inh: jax.Array | None,
+) -> None:
+    """Reject partial-E/I (one side set, the other None).
+
+    Either both masks are supplied (paired E/I substrate active) or
+    neither (no E/I substrate); mixing has no defined semantics.
+    Partial E/I is almost certainly a programmer mistake — silent
+    degradation hides it; loud failure surfaces it.
+
+    Centralized here so a single canonical error fires regardless of
+    which side is missing — the prior implementation called the
+    combine helper twice with swapped labels, and only the first
+    call's error could ever surface (depending on call order, not
+    on which side was actually missing).
+    """
+    a_set = a_is_inh is not None
+    b_set = b_is_inh is not None
+    if a_set == b_set:
+        return
+    supplied = "a_is_inhibitory" if a_set else "b_is_inhibitory"
+    missing = "b_is_inhibitory" if a_set else "a_is_inhibitory"
+    raise ValueError(
+        f"partial E/I substrate: {supplied} was supplied but "
+        f"{missing} is None. Pass both masks or neither — mixing "
+        f"has no defined semantics for paired-agent E/I."
+    )
+
+
 def _combine_ei_if_set(
     own_ei: jax.Array | None,
     partner_ei: jax.Array | None,
 ) -> jax.Array | None:
-    """Return combined [own, partner] E/I array, or None if either missing."""
-    if own_ei is None or partner_ei is None:
-        return None
-    return jnp.concatenate([own_ei, partner_ei])
+    """Return combined [own, partner] E/I array, or None if both missing.
+
+    Precondition: callers must have validated via `_validate_paired_ei`
+    that the two arrays are either both set or both None. This helper
+    no longer raises — that responsibility moved up to `step_paired`
+    where it can fire ONCE with both labels available.
+    """
+    if own_ei is not None and partner_ei is not None:
+        return jnp.concatenate([own_ei, partner_ei])
+    return None
 
 
 def step_paired(
@@ -178,9 +257,10 @@ def step_paired(
     i_ext_b: jax.Array,
     valence_a: jax.Array,
     valence_b: jax.Array,
-    adrenaline_a: jax.Array,
+    *,
     adrenaline_b: jax.Array,
     stdp_params: STDPParams,
+    adrenaline_a: jax.Array = ADRENALINE_OPEN_LOOP,
     gain_mode: GainMode = "multiplicative",
     structural_params: StructuralParams | None = None,
     a_is_inhibitory: jax.Array | None = None,
@@ -204,6 +284,10 @@ def step_paired(
     array is None, every pre is treated as excitatory and behavior
     is byte-exact to the step 2-8 code path.
     """
+    # Validate E/I argument set ONCE up front (before either combine
+    # call) so partial-E/I produces a single canonical error regardless
+    # of which side is missing.
+    _validate_paired_ei(a_is_inhibitory, b_is_inhibitory)
     # Phase 1: combined prev spikes for each agent's synaptic input.
     combined_prev_a = jnp.concatenate(
         [state.a.lif.spikes, state.b.lif.spikes]
@@ -281,8 +365,9 @@ def simulate_paired(
             carry,
             drive.i_ext_a, drive.i_ext_b,
             drive.valence_a, drive.valence_b,
-            drive.adrenaline_a, drive.adrenaline_b,
-            stdp_params,
+            adrenaline_a=drive.adrenaline_a,
+            adrenaline_b=drive.adrenaline_b,
+            stdp_params=stdp_params,
             gain_mode=gain_mode,
             structural_params=structural_params,
             a_is_inhibitory=a_is_inhibitory,

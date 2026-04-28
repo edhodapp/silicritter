@@ -54,7 +54,9 @@ class StructuralParams(NamedTuple):
     Acquisition:
         acquisition_prob: per inactive slot per step, probability of
             rebinding. Default 0.0 preserves release-only behavior
-            (backward compatible).
+            (backward compatible). Accepts a `jax.Array` (scalar)
+            so callers under jit/scan can vary it per step (e.g.
+            valence-gated or periodic acquisition schedules).
         acquisition_initial_v: v assigned to a newly-acquired slot.
             Default 0.2 (v_max/10 for V_MAX=2.0 -- starts weak, has
             to prove itself via STDP).
@@ -65,7 +67,7 @@ class StructuralParams(NamedTuple):
 
     v_release_threshold: float
     release_dwell_steps: int
-    acquisition_prob: float = 0.0
+    acquisition_prob: float | jax.Array = 0.0
     acquisition_initial_v: float = 0.2
     acquisition_plasticity_rate: float = 1.0
 

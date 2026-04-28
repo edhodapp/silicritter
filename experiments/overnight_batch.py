@@ -423,22 +423,23 @@ def _step16_once(
     pool_b0 = s16_random_b_pool(
         seed + 1, plasticity_rate, init_v_mean, init_v_std,
     )
-    fit_before, _, _ = s16_measure_fitness(
+    fit_before = s16_measure_fitness(
         pool_b0, a_is_inh, b_is_inh, S16_MEASURE_STEPS,
     )
     state0 = s16_build_state(pool_b0)
-    i_ext_a, i_ext_b, adr_a = s16_build_drives(S16_TRAIN_STEPS)
+    i_ext_a, i_ext_b = s16_build_drives(S16_TRAIN_STEPS)
     t0 = time.perf_counter()
     final_state, _, _, val_trace = s16_training_scan(
-        state0, a_is_inh, b_is_inh, i_ext_a, i_ext_b, adr_a,
+        state0, a_is_inh, b_is_inh, i_ext_a, i_ext_b,
     )
-    jax.block_until_ready(final_state.b.pool.v)
+    jax.block_until_ready(  # type: ignore[no-untyped-call]
+        final_state.b.pool.v)
     train_time = time.perf_counter() - t0
     trained_pool = final_state.b.pool
-    fit_after, _, _ = s16_measure_fitness(
+    fit_after = s16_measure_fitness(
         trained_pool, a_is_inh, b_is_inh, S16_MEASURE_STEPS,
     )
-    stats = s16_describe_pool(trained_pool)
+    stats = s16_describe_pool(trained_pool, a_is_inh)
     return {
         "fit_before": fit_before,
         "fit_after": fit_after,
