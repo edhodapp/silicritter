@@ -26,3 +26,11 @@ Thumbs.db
 # Claude settings (.claude/settings.json, .claude/settings.local.json) are
 # intentionally tracked — single-author project, workflow/permission setup
 # should migrate with the repo across machines.
+
+# Overnight-batch result archives. The active CSVs in
+# overnight_results/ change with each batch run, but archives of past
+# runs (named archive_YYYY-MM-DD_pre-<commit>) are local-only — they
+# can always be re-derived from the relevant commit by re-running the
+# batch. Tracking them would bloat the repo without adding signal that
+# isn't already in the perf_history.md narrative.
+overnight_results/archive_*/
