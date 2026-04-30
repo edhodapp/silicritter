@@ -21,7 +21,7 @@ NE acting as a global gain signal.
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -48,6 +48,22 @@ class ControllerParams(NamedTuple):
     gain: float
     adr_min: float
     adr_max: float
+
+
+class _ClosedLoopDrive(NamedTuple):
+    """Per-step drive bundle for ``simulate_closedloop``'s scan input.
+
+    Mirrors paired.py's ``_PairedDrive`` shape (A's adrenaline trace
+    plus the four traces both agents share). B's adrenaline is computed
+    by the controller at each step rather than passed in, so it is
+    absent here.
+    """
+
+    i_ext_a: jax.Array
+    i_ext_b: jax.Array
+    valence_a: jax.Array
+    valence_b: jax.Array
+    adrenaline_a: jax.Array
 
 
 def init_controller(baseline: float = 1.0) -> ControllerState:
@@ -129,26 +145,51 @@ def simulate_closedloop(
     a_is_inhibitory: jax.Array | None = None,
     b_is_inhibitory: jax.Array | None = None,
     i_weight_multiplier: float = 8.0,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
+    output_mode: Literal["raster", "rate"] = "raster",
+) -> tuple[PairedState, jax.Array, jax.Array, jax.Array]:
     """Run a closed-loop paired sim over T steps.
 
-    Returns (spikes_a, spikes_b, adrenaline_b_trace), each of shape
-    (T, ...) — the first two are (T, n_neurons); adrenaline_b is (T,).
+    Returns ``(final_state, out_a, out_b, adrenaline_b_trace)``.
+    ``final_state`` is the PairedState after the last step (matches
+    ``simulate_paired``'s contract; lets callers chain or checkpoint a
+    sim). ``adrenaline_b_trace`` always has shape ``(T,)``.
+
+    ``output_mode`` selects what each per-step output is:
+
+    - ``"raster"`` (default): full ``(T, n_neurons)`` spike raster per
+      agent.
+    - ``"rate"``: per-step population-mean firing rate ``(T,)`` per
+      agent. ``rate_x[t] == raster_x[t].mean()`` within float32
+      precision. ``final_state`` and ``adrenaline_b_trace`` are
+      bit-identical to raster mode (the controller reads only
+      population-mean rates).
+
+    For T=10M, N=256: rate mode uses ~40 MB per scalar trace vs ~2.56
+    GB per raster.
     """
+    if output_mode not in ("raster", "rate"):
+        raise ValueError(
+            f"output_mode must be 'raster' or 'rate', got {output_mode!r}"
+        )
+
+    # output_mode is a Python-level constant captured by the scan_step
+    # closure - the `if output_mode == "raster"` branch is resolved at
+    # trace time, not under jax.lax.cond. Do NOT promote output_mode to
+    # a traced (jax.Array) argument; that would convert the branch into
+    # a tracer-incompatible Python equality check on a Tracer.
     def scan_step(
         carry: tuple[PairedState, ControllerState],
-        drive: tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array],
+        drive: _ClosedLoopDrive,
     ) -> tuple[
         tuple[PairedState, ControllerState],
         tuple[jax.Array, jax.Array, jax.Array],
     ]:
         paired_state, ctrl = carry
-        i_ext_a_t, i_ext_b_t, val_a_t, val_b_t, adr_a_t = drive
         next_paired, next_ctrl = step_closedloop(
             paired_state, ctrl, ctrl_params,
-            i_ext_a=i_ext_a_t, i_ext_b=i_ext_b_t,
-            valence_a=val_a_t, valence_b=val_b_t,
-            adrenaline_a=adr_a_t,
+            i_ext_a=drive.i_ext_a, i_ext_b=drive.i_ext_b,
+            valence_a=drive.valence_a, valence_b=drive.valence_b,
+            adrenaline_a=drive.adrenaline_a,
             stdp_params=stdp_params,
             gain_mode=gain_mode,
             structural_params=structural_params,
@@ -156,19 +197,27 @@ def simulate_closedloop(
             b_is_inhibitory=b_is_inhibitory,
             i_weight_multiplier=i_weight_multiplier,
         )
+        if output_mode == "raster":
+            return (next_paired, next_ctrl), (
+                next_paired.a.lif.spikes,
+                next_paired.b.lif.spikes,
+                next_ctrl.adrenaline_b,
+            )
         return (next_paired, next_ctrl), (
-            next_paired.a.lif.spikes,
-            next_paired.b.lif.spikes,
+            next_paired.a.lif.spikes.astype(jnp.float32).mean(),
+            next_paired.b.lif.spikes.astype(jnp.float32).mean(),
             next_ctrl.adrenaline_b,
         )
 
     initial_ctrl = init_controller(ctrl_params.baseline)
-    drives = (
-        i_ext_a_trace, i_ext_b_trace,
-        valence_a_trace, valence_b_trace,
-        adrenaline_a_trace,
+    drive = _ClosedLoopDrive(
+        i_ext_a=i_ext_a_trace,
+        i_ext_b=i_ext_b_trace,
+        valence_a=valence_a_trace,
+        valence_b=valence_b_trace,
+        adrenaline_a=adrenaline_a_trace,
     )
-    _, (spikes_a, spikes_b, adr_trace) = jax.lax.scan(
-        scan_step, (initial_state, initial_ctrl), drives
+    (final_state, _), (out_a, out_b, adr_trace) = jax.lax.scan(
+        scan_step, (initial_state, initial_ctrl), drive,
     )
-    return spikes_a, spikes_b, adr_trace
+    return final_state, out_a, out_b, adr_trace

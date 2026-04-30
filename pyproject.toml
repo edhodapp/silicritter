@@ -74,6 +74,13 @@ addopts = [
     "--cov-report=term-missing",
 ]
 testpaths = ["tests"]
+# experiments/ is not an installable package (script directory), but tests
+# need to import from it. pytest's pythonpath puts experiments/ on sys.path
+# at collection time so tests can `import phase2_step10_long_t as p2`
+# without per-file sys.path.insert boilerplate. Pylint runs separately
+# from pytest, so import sites in tests still need
+# `# pylint: disable=import-error`.
+pythonpath = ["experiments"]
 
 [tool.coverage.run]
 branch = true

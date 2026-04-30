@@ -298,7 +298,7 @@ def _measure_fitness(
     # simulate_closedloop (separate controller helper) still requires
     # an adrenaline_a trace; A is open-loop so we pass jnp.ones.
     adr_a_open = jnp.ones((n_steps,), dtype=jnp.float32)
-    spikes_a, spikes_b, _ = simulate_closedloop(
+    _, spikes_a, spikes_b, _ = simulate_closedloop(
         state, _ctrl_params(),
         i_ext_a, i_ext_b, val_zero, val_zero, adr_a_open,
         _stdp_params(),

@@ -32,7 +32,7 @@ additive; nothing in the step 1-6 codebase is disturbed.
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -350,14 +350,34 @@ def simulate_paired(
     a_is_inhibitory: jax.Array | None = None,
     b_is_inhibitory: jax.Array | None = None,
     i_weight_multiplier: float = 8.0,
+    output_mode: Literal["raster", "rate"] = "raster",
 ) -> tuple[PairedState, jax.Array, jax.Array]:
     """Simulate a paired-agent sim over T steps.
 
-    Returns the final state plus both agents' spike traces, each of
-    shape (T, n_neurons). E/I substrate is opt-in via the
-    `*_is_inhibitory` arguments; see step_paired docstring.
-    """
+    Returns the final state plus per-step output for both agents.
+    ``output_mode`` selects what each per-step output is:
 
+    - ``"raster"`` (default): full ``(T, n_neurons)`` spike raster per
+      agent. Lets callers compute per-neuron metrics, raster plots,
+      etc.
+    - ``"rate"``: per-step population-mean firing rate ``(T,)`` per
+      agent. ``rate_x[t] == raster_x[t].mean()`` within float32
+      precision. Memory-friendly for long-T sweeps - at T=10M, N=256,
+      ~40 MB per scalar trace vs ~2.56 GB per raster.
+
+    E/I substrate is opt-in via the ``*_is_inhibitory`` arguments;
+    see step_paired docstring.
+    """
+    if output_mode not in ("raster", "rate"):
+        raise ValueError(
+            f"output_mode must be 'raster' or 'rate', got {output_mode!r}"
+        )
+
+    # output_mode is a Python-level constant captured by the scan_step
+    # closure - the `if output_mode == "raster"` branch is resolved at
+    # trace time, not under jax.lax.cond. Do NOT promote output_mode to
+    # a traced (jax.Array) argument; that would convert the branch into
+    # a tracer-incompatible Python equality check on a Tracer.
     def scan_step(
         carry: PairedState, drive: _PairedDrive,
     ) -> tuple[PairedState, tuple[jax.Array, jax.Array]]:
@@ -374,7 +394,14 @@ def simulate_paired(
             b_is_inhibitory=b_is_inhibitory,
             i_weight_multiplier=i_weight_multiplier,
         )
-        return next_state, (next_state.a.lif.spikes, next_state.b.lif.spikes)
+        if output_mode == "raster":
+            return next_state, (
+                next_state.a.lif.spikes, next_state.b.lif.spikes,
+            )
+        return next_state, (
+            next_state.a.lif.spikes.astype(jnp.float32).mean(),
+            next_state.b.lif.spikes.astype(jnp.float32).mean(),
+        )
 
     drive = _PairedDrive(
         i_ext_a=i_ext_a_trace,
@@ -384,10 +411,10 @@ def simulate_paired(
         adrenaline_a=adrenaline_a_trace,
         adrenaline_b=adrenaline_b_trace,
     )
-    final_state, (spikes_a, spikes_b) = jax.lax.scan(
-        scan_step, initial_state, drive
+    final_state, (out_a, out_b) = jax.lax.scan(
+        scan_step, initial_state, drive,
     )
-    return final_state, spikes_a, spikes_b
+    return final_state, out_a, out_b
 
 
 def make_pool_for_partner(

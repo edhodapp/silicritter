@@ -37,16 +37,14 @@ overnight_batch.py stale, this test fails loudly.
 from __future__ import annotations
 
 import math
-import sys
-from pathlib import Path
 
 import pytest
 
-EXPERIMENTS_DIR = Path(__file__).resolve().parent.parent / "experiments"
-sys.path.insert(0, str(EXPERIMENTS_DIR))
-
-# pylint: disable=wrong-import-position,import-error
-import overnight_batch  # noqa: E402
+# experiments/ is on sys.path via pyproject.toml's
+# [tool.pytest.ini_options].pythonpath; pylint runs separately and does
+# not read pytest config, so the import-error disable is still needed.
+# pylint: disable=import-error
+import overnight_batch
 
 # pylint: disable=protected-access
 

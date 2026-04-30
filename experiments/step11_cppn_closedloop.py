@@ -171,7 +171,7 @@ def _evaluate_one(
     )
     state = _build_state(pool_a, pool_b)
     if closed_loop:
-        spikes_a, spikes_b, _ = simulate_closedloop(
+        _, spikes_a, spikes_b, _ = simulate_closedloop(
             state, _ctrl_params(CLOSED_LOOP_GAIN),
             i_ext_a, i_ext_b, val_a, val_b, adr_a,
             _stdp_params(),

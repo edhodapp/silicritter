@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 from silicritter.lif import LIFState
 from silicritter.paired import (
@@ -282,7 +283,6 @@ def test_step_paired_partial_ei_a_only_raises_value_error() -> None:
     masks through). The contract is now: pass both masks or neither;
     partial E/I raises ValueError with a debug-useful message.
     """
-    import pytest  # pylint: disable=import-outside-toplevel
     n = 4
     k = 2
     state = init_paired_state(n, k, jax.random.PRNGKey(0))
@@ -321,7 +321,6 @@ def test_step_paired_partial_ei_a_only_raises_value_error() -> None:
 
 def test_step_paired_partial_ei_b_only_raises_value_error() -> None:
     """Partial E/I (b set, a None): symmetric case must also raise."""
-    import pytest  # pylint: disable=import-outside-toplevel
     n = 4
     k = 2
     state = init_paired_state(n, k, jax.random.PRNGKey(0))
@@ -458,3 +457,141 @@ def test_step_paired_compatible_with_structural_release() -> None:
     # Both agents' pools should have released some (or all) slots.
     assert int(final_state.a.pool.active.sum()) < n * k
     assert int(final_state.b.pool.active.sum()) < n * k
+
+
+def test_simulate_paired_rate_mode_matches_raster_means() -> None:
+    """``output_mode="rate"`` returns per-step population-mean rates equal
+    to ``output_mode="raster"`` rasters' per-step means on bit-identical
+    inputs.
+
+    Pins the contract: ``rate_x[t] == raster_x[t].mean()`` at float32
+    precision. Equivalence is the entire reason rate mode exists; if it
+    drifts, callers using rate mode silently compute a different fitness
+    from callers using raster mode, invalidating any cross-comparison.
+    """
+    n = 4
+    k = 2
+    t = 30
+    seed = 7
+
+    def make_state() -> PairedState:
+        return init_paired_state(n, k, jax.random.PRNGKey(seed))
+
+    stdp_params = default_params()
+    i_ext_a_trace = jnp.full((t, n), 20.0, dtype=jnp.float32)
+    i_ext_b_trace = jnp.full((t, n), 20.0, dtype=jnp.float32)
+    valence_trace = jnp.ones((t,), dtype=jnp.float32)
+    adrenaline_trace = jnp.ones((t,), dtype=jnp.float32)
+
+    final_full, spikes_a, spikes_b = simulate_paired(
+        make_state(),
+        i_ext_a_trace, i_ext_b_trace,
+        valence_trace, valence_trace,
+        adrenaline_trace, adrenaline_trace,
+        stdp_params,
+        output_mode="raster",
+    )
+    final_rate, rate_a, rate_b = simulate_paired(
+        make_state(),
+        i_ext_a_trace, i_ext_b_trace,
+        valence_trace, valence_trace,
+        adrenaline_trace, adrenaline_trace,
+        stdp_params,
+        output_mode="rate",
+    )
+    assert rate_a.shape == (t,)
+    assert rate_b.shape == (t,)
+    expected_rate_a = spikes_a.astype(jnp.float32).mean(axis=1)
+    expected_rate_b = spikes_b.astype(jnp.float32).mean(axis=1)
+    assert bool(jnp.allclose(rate_a, expected_rate_a, atol=1e-6))
+    assert bool(jnp.allclose(rate_b, expected_rate_b, atol=1e-6))
+    # Both modes run the same step_paired, so final state matches too.
+    assert bool(jnp.allclose(final_full.a.lif.v, final_rate.a.lif.v))
+    assert bool(jnp.allclose(final_full.b.lif.v, final_rate.b.lif.v))
+
+
+def test_simulate_paired_rate_mode_returns_paired_state_shape() -> None:
+    """Final state from ``output_mode="rate"`` has expected per-agent
+    LIF shape ``(n,)``."""
+    n = 4
+    k = 2
+    t = 10
+    state = init_paired_state(n, k, jax.random.PRNGKey(0))
+    stdp_params = default_params()
+    i_ext = jnp.zeros((t, n), dtype=jnp.float32)
+    val = jnp.zeros((t,), dtype=jnp.float32)
+    adr = jnp.ones((t,), dtype=jnp.float32)
+    final_state, _, _ = simulate_paired(
+        state, i_ext, i_ext, val, val, adr, adr, stdp_params,
+        output_mode="rate",
+    )
+    assert isinstance(final_state, PairedState)
+    assert final_state.a.lif.v.shape == (n,)
+    assert final_state.b.lif.v.shape == (n,)
+
+
+def test_simulate_paired_rejects_unknown_output_mode() -> None:
+    """An ``output_mode`` outside the Literal contract raises ValueError."""
+    n = 4
+    k = 2
+    t = 10
+    state = init_paired_state(n, k, jax.random.PRNGKey(0))
+    stdp_params = default_params()
+    i_ext = jnp.zeros((t, n), dtype=jnp.float32)
+    val = jnp.zeros((t,), dtype=jnp.float32)
+    adr = jnp.ones((t,), dtype=jnp.float32)
+    with pytest.raises(ValueError, match="output_mode"):
+        simulate_paired(
+            state, i_ext, i_ext, val, val, adr, adr, stdp_params,
+            output_mode="bogus",  # type: ignore[arg-type]
+        )
+
+
+def test_simulate_paired_accepts_per_step_scalar_i_ext() -> None:
+    """Pins the contract: ``simulate_paired`` accepts ``(T,)`` per-step
+    scalar i_ext arrays and broadcasts each scalar to all N neurons.
+
+    This is what allows long-T runs to skip allocating ``(T, N)``
+    drive rasters - at T=10M that's ~10 GB per trace, OOMs a 4 GB
+    GPU. Result with scalar broadcast must equal result with (T, N)
+    where every row is filled with the scalar.
+    """
+    n = 4
+    k = 2
+    t = 30
+    seed = 13
+    stdp_params = default_params()
+    drive_a = 20.0
+    drive_b = 16.0
+
+    def make_state() -> PairedState:
+        return init_paired_state(n, k, jax.random.PRNGKey(seed))
+
+    val = jnp.zeros((t,), dtype=jnp.float32)
+    adr = jnp.ones((t,), dtype=jnp.float32)
+
+    # Per-step scalar drives (the new shape phase 2 uses).
+    i_ext_a_scalar = jnp.full((t,), drive_a, dtype=jnp.float32)
+    i_ext_b_scalar = jnp.full((t,), drive_b, dtype=jnp.float32)
+    final_scalar, spikes_a_s, spikes_b_s = simulate_paired(
+        make_state(),
+        i_ext_a_scalar, i_ext_b_scalar,
+        val, val, adr, adr,
+        stdp_params,
+    )
+    # Per-step (N,) drives, value-equivalent (every neuron sees same drive).
+    i_ext_a_full = jnp.full((t, n), drive_a, dtype=jnp.float32)
+    i_ext_b_full = jnp.full((t, n), drive_b, dtype=jnp.float32)
+    final_full, spikes_a_f, spikes_b_f = simulate_paired(
+        make_state(),
+        i_ext_a_full, i_ext_b_full,
+        val, val, adr, adr,
+        stdp_params,
+    )
+    # Scalar broadcast must produce identical spike rasters and final
+    # state - JAX's `+` of a scalar with (N,) is the same as `+` of an
+    # all-equal (N,) with (N,).
+    assert bool(jnp.array_equal(spikes_a_s, spikes_a_f))
+    assert bool(jnp.array_equal(spikes_b_s, spikes_b_f))
+    assert bool(jnp.allclose(final_scalar.a.lif.v, final_full.a.lif.v))
+    assert bool(jnp.allclose(final_scalar.b.lif.v, final_full.b.lif.v))

@@ -149,7 +149,7 @@ def _run_closed_loop(
     gain: float,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Run one closed-loop sim; return (spikes_a, spikes_b, adr_trace)."""
-    return simulate_closedloop(
+    _, spikes_a, spikes_b, adr_trace = simulate_closedloop(
         initial_state, _ctrl_params(gain),
         i_ext_a, i_ext_b, valence, valence, adrenaline_a,
         _stdp_params(),
@@ -158,6 +158,7 @@ def _run_closed_loop(
         b_is_inhibitory=b_is_inh,
         i_weight_multiplier=I_WEIGHT_MULTIPLIER,
     )
+    return spikes_a, spikes_b, adr_trace
 
 
 def _run_open_loop(
