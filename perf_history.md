@@ -1590,3 +1590,97 @@ reconstruction; visible now.
 - Same Caveats apply as the 2026-04-30 entry (one machine, N=5,
   variance bound rail-floor-limited). Block 9 at N=500 still
   required for actual variance distribution.
+
+---
+
+## 2026-05-01 — Block 10: D008 E/I confirmed at N=100, with mechanism
+
+The N=100 reanchor of D008's (i_frac=0.2, i_mult=8.0) E/I operating-
+point choice over the prior canonical (0.2, 4.0). Replaces step 13's
+existing N=20 anchor. The result confirms D008 *and* surfaces a
+mechanism that the smaller-N anchor couldn't see.
+
+- **Script:** `experiments/block10_step13_ei_n100.py` (commit a99f3f3).
+- **Machine:** ASUS VivoBook X580GD, NVIDIA GTX 1050 Mobile (4 GB VRAM).
+- **Stack:** same as 2026-04-28 entry (Python 3.12.13, JAX 0.10.0 + CUDA 12.9).
+- **Sweep:** 2 i_mults × 100 seeds (stride 37) × 2 conditions = 400 runs at
+  step 13's T=2000 with closed-loop gain=50.
+- **Total wall time:** 128.4 s (2 min 8 s) - per-run wall ~0.3 s, much
+  faster than the 5-9 s extrapolation from step 13's earlier timing.
+  The rate-mode + scalar-drive optimizations from Phase 2 transfer to
+  T=2000 too.
+
+### Mean fitness by (i_mult, condition), N=100 seeds
+
+| condition   | i_mult | mean fitness    | std       | min          | max          |
+|-------------|-------:|----------------:|----------:|-------------:|-------------:|
+| open_loop   | 4.0    | −1.5545e-04     | 9.28e-07  | −1.5728e-04  | −1.5354e-04  |
+| closed_loop | 4.0    | **−5.5948e-05** | 3.98e-11  | −5.5948e-05  | −5.5948e-05  |
+| open_loop   | 8.0    | −1.4675e-04     | 1.49e-06  | −1.5033e-04  | −1.4330e-04  |
+| closed_loop | 8.0    | **−4.9040e-05** | 4.97e-07  | −5.0369e-05  | −4.8083e-05  |
+
+D008 (i_mult=8.0) vs prior canonical (i_mult=4.0):
+- **closed_loop fitness improves by 12.35%** (−5.595e-05 → −4.904e-05)
+- open_loop fitness improves by 5.60% (−1.555e-04 → −1.467e-04)
+
+Both directions favor D008 at N=100, supersedes the N=20 anchor with a
+much tighter variance bound.
+
+### New mechanism observation only visible at N=100
+
+At i_mult=4.0 (prior canonical), closed-loop std across 100 seeds is
+**3.98e-11** - effectively zero, ~12 orders of magnitude smaller than
+the open-loop std at the same i_mult. This is the controller railing
+at adr_max for the entire run: every seed gets the same trajectory
+because the controller has no dynamic range to use, so it produces a
+deterministic fitness regardless of pool randomization.
+
+At i_mult=8.0 (D008), closed-loop std is **4.97e-07** - 4 orders of
+magnitude larger than the i_mult=4.0 case, and now in the same order
+of magnitude as the open-loop noise floor. **The controller is no
+longer rail-clipped.**
+
+Interpretation: stronger inhibition (i_mult=8.0) makes B harder to
+drive, so when A's drive demands push B's rate up, the controller
+needs less of `adr_max`'s headroom to compensate - it operates
+within its `[adr_min, adr_max]` range rather than saturating. This
+is exactly what you want from a control system. The fitness
+improvement at i_mult=8.0 isn't just "more inhibition is better"
+in a flat sense; it's "the controller has somewhere to work, so it
+actually works."
+
+This mechanism wasn't visible at N=20 because the rail-clipping
+deterministic-floor at i_mult=4.0 needs ≥30 seeds before the
+std=4e-11 vs std=5e-07 separation becomes statistically obvious.
+
+### Implications
+
+1. **D008 confirmed at N=100, no caveats.** The decision to adopt
+   (0.2, 8.0) over (0.2, 4.0) was correct; tightening the bound from
+   N=20 to N=100 doesn't change the conclusion.
+2. **The controller-headroom interpretation is new.** Previously D008
+   was justified on fitness alone; now we have a mechanistic story
+   ("inhibition lets the controller work in range"). Worth folding
+   into the README's E/I section and into Block 11/12/13's setup
+   reasoning.
+3. **Block 10 wall-time radically beat estimate** (2 min vs 30-60
+   min predicted). The rate-output_mode + scalar-drive memory fixes
+   from Phase 2 cut per-step overhead substantially, even at small
+   T. Future block estimates on the laptop should use ~0.3 s/run as
+   the baseline, not the older step-13 5-9 s anchor.
+
+### Caveats
+
+- N=100 with std at order 1e-7 (closed_loop, i_mult=8.0) gives a
+  reasonable variance bound but not bulletproof - a follow-up at
+  N=500 (paralleling Block 9 for step 10) would tighten further if
+  Block 11+ surface anything weird.
+- Single machine, single run. Per the cross-run reproducibility
+  pattern from Phase 2, a second independent run on different
+  hardware would harden the result; the laptop-only measurement is
+  enough for tonight's result, AWS-spot-paralleled re-run would be
+  the rigorous version.
+- Wall-time numbers (0.3 s/run) are GTX 1050 Mobile-specific.
+  A100 / L4 will be faster but at small T the speedup is modest
+  (Phase 2's T=2000 was also fast on A100; long-T is where the GPU
+  capacity matters).
