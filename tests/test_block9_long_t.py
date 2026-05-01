@@ -144,6 +144,26 @@ def test_append_row_then_completed_pairs_round_trip(tmp_path: Path) -> None:
     assert (37, 100000, "gain=200") in completed
 
 
+def test_append_row_writes_header_to_existing_empty_file(
+    tmp_path: Path,
+) -> None:
+    """If the CSV exists but is empty, _append_row writes the header.
+
+    Failure mode without this: prior run created the file then
+    crashed before writing the header, leaving a 0-byte file. Next
+    run skips header (file 'exists') but DictReader treats the first
+    data row as the header, silently corrupting the resume set.
+    """
+    p = tmp_path / "empty_then_append.csv"
+    p.touch()
+    assert p.stat().st_size == 0
+    b9._append_row(p, 0, 10000, "open_loop", -1.5e-4, 0.5)
+    rows = list(csv.reader(p.read_text().splitlines()))
+    assert rows[0] == ["seed", "t_steps", "condition", "fitness", "wall_sec"]
+    assert rows[1][0] == "0"
+    assert (0, 10000, "open_loop") in b9._completed_pairs(p)
+
+
 # ----- _log ----------------------------------------------------------------
 
 

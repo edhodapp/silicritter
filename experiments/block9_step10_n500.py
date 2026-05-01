@@ -325,11 +325,19 @@ def _append_row(
     csv_path: Path, seed: int, t_steps: int,
     condition: str, fitness: float, wall_sec: float,
 ) -> None:
-    """Append a single result row, writing the CSV header on first write."""
-    new_file = not csv_path.exists()
+    """Append a single result row, writing the CSV header on first write.
+
+    Header detection uses ``stat().st_size == 0`` (not just ``not
+    exists()``): if a prior run created the file but crashed before
+    writing the header (or before the first row), the file survives
+    at zero bytes. Without this guard the next run would skip writing
+    the header, and ``_completed_pairs`` would misinterpret the first
+    real row as the header on resume.
+    """
+    needs_header = (not csv_path.exists()) or csv_path.stat().st_size == 0
     with csv_path.open("a", newline="") as f:
         writer = csv.writer(f)
-        if new_file:
+        if needs_header:
             writer.writerow(
                 ["seed", "t_steps", "condition", "fitness", "wall_sec"],
             )
