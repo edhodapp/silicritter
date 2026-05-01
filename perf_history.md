@@ -1529,3 +1529,64 @@ The step-10 paper / README claim, replication-tracked, should read:
   no information about the variance distribution — it just bounds
   it below the resolution of the rail. Block 9 (N=500) will produce
   the actual variance bound on the closed-loop fitness.
+
+---
+
+## 2026-05-01 — Phase 2 durable rerun confirms 2026-04-30 reconstruction
+
+A second independent Phase 2 run on Colab A100, this time with the
+notebook patched to symlink ``overnight_results/`` directly to a
+Drive-mounted folder so per-row writes are durably saved (fix for the
+session-timeout that lost the prior run's CSV file). Resolves the
+"reconstructed from inline log at 3 sig figs" caveat on the
+2026-04-30 entry: the durable CSV in ``overnight_results/
+phase2_step10_long_t.csv`` is now this run's full-precision
+(~6 sig fig) output.
+
+- **Script:** unchanged from prior run, ``experiments/phase2_step10_long_t.py``
+  at commit ``b9c8633`` (no code under test changed between runs).
+- **Notebook:** ``colab/phase2_long_t.ipynb`` updated in commit
+  ``3b9352e`` to mount Drive in cell 3, symlink overnight_results/
+  → ``MyDrive/silicritter_phase2/<UTC-timestamp>/``, and seed-write
+  a sentinel file to fail-fast on Drive auth issues.
+- **Machine:** Google Colab Pro+, NVIDIA A100-SXM4-40GB.
+- **Drive folder:** ``MyDrive/silicritter_phase2/2026-05-01T020640Z/``.
+- **Total wall:** 5446.9 s (90.8 min) — vs 5480.5 s (91.3 min) on
+  prior run. Within thermal noise.
+
+### Cross-run agreement (Run 1 vs Run 2 means, N=5 seeds)
+
+| T          | Run 1 gain=200 mean | Run 2 gain=200 mean | delta     |
+|------------|--------------------:|--------------------:|----------:|
+| 10 000     | −3.669e-05          | −3.668605e-05       | ~5e-10    |
+| 100 000    | −2.770e-05          | −2.769557e-05       | ~5e-10    |
+| 1 000 000  | −2.709e-05          | −2.708675e-05       | ~3e-10    |
+| 10 000 000 | −2.728e-05          | −2.728288e-05       | ~3e-10    |
+
+Run-to-run delta is below the 4th significant figure for every
+condition; the qualitative findings from 2026-04-30 are unchanged.
+Headline: gain=200 at T=10M, **−2.728e-05** (mean across 5 seeds, 5th
+sig fig varies by ~1 across seeds) — supersedes step 10's reported
+−5.60e-5 (which was N=1 at T=2000).
+
+### New observation only visible at full precision
+
+At T=1 000 000, gain=50 and gain=200 are **bit-identical
+(−2.708675e-05) for all five seeds** — both controllers rail at
+``adr_max`` for the entire run, producing exactly the same trajectory.
+At T=10M they diverge by ~0.4% (gain=50 ≈ −2.717e-05, gain=200 ≈
+−2.728e-05): the longer run gives gain=50 enough opportunity to
+occasionally come off the rail. This was hidden in the 3-sig-fig
+reconstruction; visible now.
+
+### Caveats
+
+- Run-to-run drift in the 5th–6th significant figure at long T is
+  expected: A100 reductions are not bit-deterministic across runs
+  because XLA may schedule reductions in different orders. The 4-sig-
+  fig agreement is the right reproducibility bar.
+- Wall time 90.8 vs 91.3 min — A100 thermal/scheduler noise; no
+  performance regression.
+- Same Caveats apply as the 2026-04-30 entry (one machine, N=5,
+  variance bound rail-floor-limited). Block 9 at N=500 still
+  required for actual variance distribution.
