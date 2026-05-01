@@ -1,0 +1,104 @@
+[2026-04-30T22:14:43+00:00] phase 2 long-T sweep: durations=[10000, 100000, 1000000, 10000000], N=5 seeds, 4 conditions per (seed, T)
+[2026-04-30T22:14:43+00:00] device: gpu / cuda:0
+[2026-04-30T22:14:43+00:00] already complete: 0 / 80
+[2026-04-30T22:14:43+00:00] start seed=0 t=10000 (4 of 4 conditions)
+[2026-04-30T22:14:47+00:00]   done seed=0 t=10000 open_loop fitness=-1.567e-04 wall=0.6s
+[2026-04-30T22:14:47+00:00]   done seed=0 t=10000 gain=10 fitness=-7.809e-05 wall=0.7s
+[2026-04-30T22:14:47+00:00]   done seed=0 t=10000 gain=50 fitness=-3.669e-05 wall=0.7s
+[2026-04-30T22:14:47+00:00]   done seed=0 t=10000 gain=200 fitness=-3.669e-05 wall=0.7s
+[2026-04-30T22:14:47+00:00] start seed=37 t=10000 (4 of 4 conditions)
+[2026-04-30T22:14:50+00:00]   done seed=37 t=10000 open_loop fitness=-1.565e-04 wall=0.5s
+[2026-04-30T22:14:50+00:00]   done seed=37 t=10000 gain=10 fitness=-7.878e-05 wall=0.7s
+[2026-04-30T22:14:50+00:00]   done seed=37 t=10000 gain=50 fitness=-3.669e-05 wall=0.7s
+[2026-04-30T22:14:50+00:00]   done seed=37 t=10000 gain=200 fitness=-3.669e-05 wall=0.7s
+[2026-04-30T22:14:50+00:00] start seed=74 t=10000 (4 of 4 conditions)
+[2026-04-30T22:14:52+00:00]   done seed=74 t=10000 open_loop fitness=-1.558e-04 wall=0.5s
+[2026-04-30T22:14:52+00:00]   done seed=74 t=10000 gain=10 fitness=-7.885e-05 wall=0.7s
+[2026-04-30T22:14:52+00:00]   done seed=74 t=10000 gain=50 fitness=-3.669e-05 wall=0.7s
+[2026-04-30T22:14:52+00:00]   done seed=74 t=10000 gain=200 fitness=-3.669e-05 wall=0.7s
+[2026-04-30T22:14:52+00:00] start seed=111 t=10000 (4 of 4 conditions)
+[2026-04-30T22:14:55+00:00]   done seed=111 t=10000 open_loop fitness=-1.565e-04 wall=0.5s
+[2026-04-30T22:14:55+00:00]   done seed=111 t=10000 gain=10 fitness=-7.835e-05 wall=0.7s
+[2026-04-30T22:14:55+00:00]   done seed=111 t=10000 gain=50 fitness=-3.669e-05 wall=0.7s
+[2026-04-30T22:14:55+00:00]   done seed=111 t=10000 gain=200 fitness=-3.669e-05 wall=0.7s
+[2026-04-30T22:14:55+00:00] start seed=148 t=10000 (4 of 4 conditions)
+[2026-04-30T22:14:58+00:00]   done seed=148 t=10000 open_loop fitness=-1.563e-04 wall=0.5s
+[2026-04-30T22:14:58+00:00]   done seed=148 t=10000 gain=10 fitness=-7.702e-05 wall=0.7s
+[2026-04-30T22:14:58+00:00]   done seed=148 t=10000 gain=50 fitness=-3.669e-05 wall=0.7s
+[2026-04-30T22:14:58+00:00]   done seed=148 t=10000 gain=200 fitness=-3.669e-05 wall=0.7s
+[2026-04-30T22:14:58+00:00] start seed=0 t=100000 (4 of 4 conditions)
+[2026-04-30T22:15:09+00:00]   done seed=0 t=100000 open_loop fitness=-1.523e-04 wall=2.2s
+[2026-04-30T22:15:09+00:00]   done seed=0 t=100000 gain=10 fitness=-7.230e-05 wall=3.0s
+[2026-04-30T22:15:09+00:00]   done seed=0 t=100000 gain=50 fitness=-2.737e-05 wall=3.1s
+[2026-04-30T22:15:09+00:00]   done seed=0 t=100000 gain=200 fitness=-2.769e-05 wall=3.1s
+[2026-04-30T22:15:09+00:00] start seed=37 t=100000 (4 of 4 conditions)
+[2026-04-30T22:15:21+00:00]   done seed=37 t=100000 open_loop fitness=-1.525e-04 wall=2.2s
+[2026-04-30T22:15:21+00:00]   done seed=37 t=100000 gain=10 fitness=-7.243e-05 wall=3.0s
+[2026-04-30T22:15:21+00:00]   done seed=37 t=100000 gain=50 fitness=-2.737e-05 wall=3.1s
+[2026-04-30T22:15:21+00:00]   done seed=37 t=100000 gain=200 fitness=-2.770e-05 wall=3.1s
+[2026-04-30T22:15:21+00:00] start seed=74 t=100000 (4 of 4 conditions)
+[2026-04-30T22:15:32+00:00]   done seed=74 t=100000 open_loop fitness=-1.526e-04 wall=2.2s
+[2026-04-30T22:15:32+00:00]   done seed=74 t=100000 gain=10 fitness=-7.283e-05 wall=3.0s
+[2026-04-30T22:15:32+00:00]   done seed=74 t=100000 gain=50 fitness=-2.739e-05 wall=3.1s
+[2026-04-30T22:15:32+00:00]   done seed=74 t=100000 gain=200 fitness=-2.770e-05 wall=3.1s
+[2026-04-30T22:15:32+00:00] start seed=111 t=100000 (4 of 4 conditions)
+[2026-04-30T22:15:43+00:00]   done seed=111 t=100000 open_loop fitness=-1.523e-04 wall=2.2s
+[2026-04-30T22:15:43+00:00]   done seed=111 t=100000 gain=10 fitness=-7.218e-05 wall=3.0s
+[2026-04-30T22:15:43+00:00]   done seed=111 t=100000 gain=50 fitness=-2.738e-05 wall=3.1s
+[2026-04-30T22:15:43+00:00]   done seed=111 t=100000 gain=200 fitness=-2.770e-05 wall=3.1s
+[2026-04-30T22:15:43+00:00] start seed=148 t=100000 (4 of 4 conditions)
+[2026-04-30T22:15:55+00:00]   done seed=148 t=100000 open_loop fitness=-1.524e-04 wall=2.2s
+[2026-04-30T22:15:55+00:00]   done seed=148 t=100000 gain=10 fitness=-7.283e-05 wall=3.0s
+[2026-04-30T22:15:55+00:00]   done seed=148 t=100000 gain=50 fitness=-2.742e-05 wall=3.1s
+[2026-04-30T22:15:55+00:00]   done seed=148 t=100000 gain=200 fitness=-2.770e-05 wall=3.1s
+[2026-04-30T22:15:55+00:00] start seed=0 t=1000000 (4 of 4 conditions)
+[2026-04-30T22:17:37+00:00]   done seed=0 t=1000000 open_loop fitness=-1.531e-04 wall=18.6s
+[2026-04-30T22:17:37+00:00]   done seed=0 t=1000000 gain=10 fitness=-6.922e-05 wall=28.2s
+[2026-04-30T22:17:37+00:00]   done seed=0 t=1000000 gain=50 fitness=-2.709e-05 wall=27.5s
+[2026-04-30T22:17:37+00:00]   done seed=0 t=1000000 gain=200 fitness=-2.709e-05 wall=27.7s
+[2026-04-30T22:17:37+00:00] start seed=37 t=1000000 (4 of 4 conditions)
+[2026-04-30T22:19:20+00:00]   done seed=37 t=1000000 open_loop fitness=-1.539e-04 wall=18.7s
+[2026-04-30T22:19:20+00:00]   done seed=37 t=1000000 gain=10 fitness=-6.771e-05 wall=28.5s
+[2026-04-30T22:19:20+00:00]   done seed=37 t=1000000 gain=50 fitness=-2.709e-05 wall=27.5s
+[2026-04-30T22:19:20+00:00]   done seed=37 t=1000000 gain=200 fitness=-2.709e-05 wall=27.6s
+[2026-04-30T22:19:20+00:00] start seed=74 t=1000000 (4 of 4 conditions)
+[2026-04-30T22:21:02+00:00]   done seed=74 t=1000000 open_loop fitness=-1.534e-04 wall=18.7s
+[2026-04-30T22:21:02+00:00]   done seed=74 t=1000000 gain=10 fitness=-6.755e-05 wall=28.4s
+[2026-04-30T22:21:02+00:00]   done seed=74 t=1000000 gain=50 fitness=-2.709e-05 wall=27.6s
+[2026-04-30T22:21:02+00:00]   done seed=74 t=1000000 gain=200 fitness=-2.709e-05 wall=27.6s
+[2026-04-30T22:21:02+00:00] start seed=111 t=1000000 (4 of 4 conditions)
+[2026-04-30T22:22:44+00:00]   done seed=111 t=1000000 open_loop fitness=-1.534e-04 wall=18.6s
+[2026-04-30T22:22:44+00:00]   done seed=111 t=1000000 gain=10 fitness=-6.823e-05 wall=28.3s
+[2026-04-30T22:22:44+00:00]   done seed=111 t=1000000 gain=50 fitness=-2.709e-05 wall=27.6s
+[2026-04-30T22:22:44+00:00]   done seed=111 t=1000000 gain=200 fitness=-2.709e-05 wall=27.6s
+[2026-04-30T22:22:44+00:00] start seed=148 t=1000000 (4 of 4 conditions)
+[2026-04-30T22:24:26+00:00]   done seed=148 t=1000000 open_loop fitness=-1.534e-04 wall=18.6s
+[2026-04-30T22:24:26+00:00]   done seed=148 t=1000000 gain=10 fitness=-6.797e-05 wall=28.4s
+[2026-04-30T22:24:26+00:00]   done seed=148 t=1000000 gain=50 fitness=-2.709e-05 wall=27.7s
+[2026-04-30T22:24:26+00:00]   done seed=148 t=1000000 gain=200 fitness=-2.709e-05 wall=27.6s
+[2026-04-30T22:24:26+00:00] start seed=0 t=10000000 (4 of 4 conditions)
+[2026-04-30T22:40:47+00:00]   done seed=0 t=10000000 open_loop fitness=-1.587e-04 wall=174.1s
+[2026-04-30T22:40:47+00:00]   done seed=0 t=10000000 gain=10 fitness=-7.297e-05 wall=267.8s
+[2026-04-30T22:40:47+00:00]   done seed=0 t=10000000 gain=50 fitness=-2.724e-05 wall=269.7s
+[2026-04-30T22:40:47+00:00]   done seed=0 t=10000000 gain=200 fitness=-2.728e-05 wall=268.8s
+[2026-04-30T22:40:47+00:00] start seed=37 t=10000000 (4 of 4 conditions)
+[2026-04-30T22:57:06+00:00]   done seed=37 t=10000000 open_loop fitness=-1.578e-04 wall=173.3s
+[2026-04-30T22:57:06+00:00]   done seed=37 t=10000000 gain=10 fitness=-7.279e-05 wall=268.9s
+[2026-04-30T22:57:06+00:00]   done seed=37 t=10000000 gain=50 fitness=-2.721e-05 wall=267.8s
+[2026-04-30T22:57:06+00:00]   done seed=37 t=10000000 gain=200 fitness=-2.728e-05 wall=268.6s
+[2026-04-30T22:57:06+00:00] start seed=74 t=10000000 (4 of 4 conditions)
+[2026-04-30T23:13:24+00:00]   done seed=74 t=10000000 open_loop fitness=-1.595e-04 wall=173.8s
+[2026-04-30T23:13:24+00:00]   done seed=74 t=10000000 gain=10 fitness=-7.354e-05 wall=268.0s
+[2026-04-30T23:13:24+00:00]   done seed=74 t=10000000 gain=50 fitness=-2.710e-05 wall=267.9s
+[2026-04-30T23:13:24+00:00]   done seed=74 t=10000000 gain=200 fitness=-2.728e-05 wall=268.4s
+[2026-04-30T23:13:24+00:00] start seed=111 t=10000000 (4 of 4 conditions)
+[2026-04-30T23:29:46+00:00]   done seed=111 t=10000000 open_loop fitness=-1.595e-04 wall=174.2s
+[2026-04-30T23:29:46+00:00]   done seed=111 t=10000000 gain=10 fitness=-7.295e-05 wall=268.5s
+[2026-04-30T23:29:46+00:00]   done seed=111 t=10000000 gain=50 fitness=-2.712e-05 wall=270.1s
+[2026-04-30T23:29:46+00:00]   done seed=111 t=10000000 gain=200 fitness=-2.728e-05 wall=269.0s
+[2026-04-30T23:29:46+00:00] start seed=148 t=10000000 (4 of 4 conditions)
+[2026-04-30T23:46:03+00:00]   done seed=148 t=10000000 open_loop fitness=-1.591e-04 wall=172.3s
+[2026-04-30T23:46:03+00:00]   done seed=148 t=10000000 gain=10 fitness=-7.257e-05 wall=267.8s
+[2026-04-30T23:46:03+00:00]   done seed=148 t=10000000 gain=50 fitness=-2.719e-05 wall=269.5s
+[2026-04-30T23:46:03+00:00]   done seed=148 t=10000000 gain=200 fitness=-2.728e-05 wall=267.9s
+[2026-04-30T23:46:03+00:00] phase 2 complete: total wall 5480.5s
