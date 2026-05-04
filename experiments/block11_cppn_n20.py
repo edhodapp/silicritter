@@ -104,7 +104,7 @@ def _completed_pairs(csv_path: Path) -> set[tuple[int, str]]:
     if not csv_path.exists():
         return set()
     completed: set[tuple[int, str]] = set()
-    with csv_path.open(newline="") as f:
+    with csv_path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             completed.add((int(row["ga_seed"]), row["condition"]))
@@ -123,7 +123,7 @@ def _append_row(
     fix; resume on a corrupted prior run is safe).
     """
     needs_header = (not csv_path.exists()) or csv_path.stat().st_size == 0
-    with csv_path.open("a", newline="") as f:
+    with csv_path.open("a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if needs_header:
             writer.writerow(
@@ -174,7 +174,7 @@ def _run_one_ga(ga_seed: int, condition: str) -> tuple[float, float]:
     b_is_inh = assign_ei_identity(s11.N_NEURONS, s11.INHIBITORY_FRACTION)
     closed_loop = condition == "closed_loop"
     label = f"ga{ga_seed}/{condition}"
-    t0 = time.time()
+    t0 = time.monotonic()
     _, best_fit = s11._evolve(  # pylint: disable=protected-access
         label, scenario, a_is_inh, b_is_inh,
         closed_loop=closed_loop,
@@ -183,7 +183,7 @@ def _run_one_ga(ga_seed: int, condition: str) -> tuple[float, float]:
     # Coerce explicitly: s11._evolve returns a Python float in the
     # current code path, but a JAX scalar would silently break
     # _append_row's f"{...:.6e}" formatting on some JAX versions.
-    return float(best_fit), time.time() - t0
+    return float(best_fit), time.monotonic() - t0
 
 
 def main() -> None:
@@ -198,7 +198,7 @@ def main() -> None:
     )
     _log(f"device: {jax.default_backend()} / {jax.devices()[0]}")
     _log(f"already complete: {len(completed)} / {expected}")
-    overall_start = time.time()
+    overall_start = time.monotonic()
     todo = _gas_to_run(completed)
     consecutive_failures = 0
     failed_pairs: list[tuple[int, str]] = []
@@ -227,7 +227,7 @@ def main() -> None:
             f"  done ga_seed={ga_seed} {condition} "
             f"best_fit={best_fit:.3e} wall={wall:.1f}s"
         )
-    total_wall = time.time() - overall_start
+    total_wall = time.monotonic() - overall_start
     if failed_pairs:
         _log(
             f"block 11 finished with {len(failed_pairs)} failed pairs: "
