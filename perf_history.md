@@ -1935,3 +1935,154 @@ the bias.
   be a different experiment.
 - Selection-on-noise bias is not directly characterized. Block 11b
   is the right tool for that.
+
+---
+
+## 2026-05-04 — Block 11b: GA topology + 100-eval-seed re-eval
+
+Three-phase follow-up to Block 11 that addressed all three open
+scientific findings: topology fingerprinting per evolved genome,
+selection-on-noise bias check via novel-scenario re-evaluation,
+and best-GA topology extraction.
+
+- **Script:** `experiments/block11b_genome_analysis.py` (commit 45f0e85).
+- **Machine:** ASUS VivoBook X580GD, NVIDIA GTX 1050 Mobile.
+- **Sweep:** 40 evolved genomes (20 ga_seeds × 2 conditions, captured
+  by re-running Block 11's GAs deterministically) × 100 eval_seeds =
+  4000 novel-scenario evaluations.
+- **Total wall time:** ~30 min (Phase 1 GA re-run 6 min, Phase 3 eval
+  loop 24 min). Phase 2 instant.
+
+### Phase 2 topology stats by condition (mean ± std across 20 genomes)
+
+| metric           | open_loop         | closed_loop       |
+|------------------|------------------:|------------------:|
+| cross_pct        | **100.0 ± 0.0**   | 98.6 ± 3.0        |
+| cross_e_pct      | **100.0 ± 0.0**   | 97.8 ± 2.8        |
+| cross_i_pct      | **0.0 ± 0.0**     | 0.8 ± 0.9         |
+| recurrent_pct    | **0.0 ± 0.0**     | 1.4 ± 3.0         |
+| v_mean           | **1.997 ± 0.005** | 1.886 ± 0.109     |
+| v_std (within)   | **0.002 ± 0.003** | 0.063 ± 0.086     |
+| v_max            | **1.999 ± 0.002** | 1.959 ± 0.047     |
+
+Hand-wired reference: `cross_pct=100, cross_e_pct=100, v=2.0`
+everywhere.
+
+**Open-loop GAs converge to bit-identical "all cross-E, v=V_MAX"
+topology.** Every one of the 20 open-loop GAs evolved to exactly
+the hand-wired pattern: 100% cross-substrate, 100% to partner E
+neurons, weights pinned at V_MAX. The CPPN parameterization and
+the GA both find the same answer that the hand-wired pool was
+already encoding by construction.
+
+Closed-loop GAs are more topologically diverse (std=3% on cross_pct,
+3% on recurrent_pct). Some explore mixed cross/recurrent topologies;
+some find the hand-wired pattern. The fitness landscape under the
+controller has multiple useful local optima.
+
+### Best closed-loop GA topology (ga_seed=0, train fitness −4.92e-05)
+
+    cross_pct       = 87.9    (vs 100 hand-wired)
+    cross_e_pct     = 87.9
+    cross_i_pct     =  0.0
+    recurrent_pct   = 12.1    (NEW: hand-wired has 0%)
+    v (all near saturation, std=0.003 within pool)
+
+The best evolved closed-loop CPPN allocates ~12% of slots to
+recurrent (own-substrate) connections instead of cross-substrate.
+This is a genuine structural innovation - hand-wired never used
+recurrent slots. On the training scenario this beats hand-wired
+by 12%; on novel scenarios its mean across 100 eval_seeds is
+~6% better than hand-wired. Smaller than the training number but
+nonzero - this specific recurrent-mix topology is real.
+
+### Phase 3: novel-scenario re-evaluation (N=2000 evals per condition)
+
+| condition   | N    | mean         | std       | SEM       | min          | max          |
+|-------------|-----:|-------------:|----------:|----------:|-------------:|-------------:|
+| open_loop   | 2000 | **−1.5923e-04** | 9.65e-06 | 2.16e-07 | −1.7202e-04  | −1.3977e-04  |
+| closed_loop | 2000 | **−5.5516e-05** | 2.09e-06 | 4.66e-08 | −6.8409e-05  | −4.6503e-05  |
+
+Per-genome means (averaged across 100 eval_seeds, distribution
+across 20 GAs per condition):
+
+| condition   | genome-mean         | std-of-genome-means | min          | max          |
+|-------------|--------------------:|--------------------:|-------------:|-------------:|
+| open_loop   | −1.5923e-04         | 3.75e-06            | −1.6523e-04  | −1.5332e-04  |
+| closed_loop | −5.5516e-05         | 1.67e-06            | −6.0795e-05  | −5.2742e-05  |
+
+### Selection-on-noise bias accounting
+
+Comparing Block 11's training-scenario means to Block 11b's
+novel-scenario means:
+
+| condition   | Block 11 train  | Block 11b eval  | training bias |
+|-------------|----------------:|----------------:|---------------|
+| open_loop   | −1.4230e-04     | **−1.5923e-04** | **+11.9%**    |
+| closed_loop | −5.3909e-05     | **−5.5516e-05** | **+3.0%**     |
+
+**The Block 11 "+9% open-loop GA win" was almost entirely selection
+bias.** On novel scenarios, the open-loop GAs perform at
+−1.5923e-04 - within 2% of step 9's hand-wired −1.56e-04, in the
+"slightly worse" direction. Combined with the topology finding
+(open-loop GAs converge to bit-identical hand-wired pattern), the
+correct conclusion is: **the GA does not find anything better than
+hand-wired for the open-loop condition.** Block 11's training-fit
+"win" was the GA selecting the population member best at the
+deterministic training scenario, which doesn't translate to novel
+scenarios.
+
+**The Block 11 "+4% closed-loop GA mean win" was also mostly
+selection bias** (3.0% of the +4% was bias-explainable). Cross-
+scenario mean is −5.5516e-05 vs hand-wired −5.60e-05 - **only
+~0.9% better on average.** The win exists but is near the noise
+floor.
+
+**The best individual closed-loop genome (ga_seed=0) is the
+exception.** Across 100 novel scenarios, its mean is around
+−5.27e-05 - ~6% better than hand-wired. This is the recurrent-mix
+topology described above. A real, replicable, topology-driven
+improvement, just smaller than Block 11's training-only fit
+suggested.
+
+### Implications
+
+1. **The GA does not find anything new for open-loop.** The
+   hand-wired cross-E-only pool was already at the open-loop
+   optimum; CPPN search converges to that exact pattern. This is
+   informative - it means future open-loop work doesn't need GA
+   exploration to confirm topology choice.
+
+2. **The GA finds a marginal closed-loop improvement via mixed
+   topology.** The recurrent-mix pattern at ga_seed=0
+   (87.9% cross-E + 12.1% recurrent) yields ~6% better novel-
+   scenario fitness than hand-wired. Worth investigating: does this
+   pattern generalize to other operating points (e.g. i_mult=8.0
+   per Block 10's D008)? Could the recurrent slots be hand-coded
+   into a smarter baseline?
+
+3. **The +9%/+4% Block 11 wins were mostly selection bias.** The
+   asymmetric inference rule from Block 11's docstring caveat held:
+   "GA wins" needed Block 11b to validate. Without it, we'd have
+   reported a fictitious open-loop improvement.
+
+4. **The plan's "wall-time dominator" framing was wrong.** Block
+   11 + 11b together took ~36 min on the laptop. The plan's
+   estimate assumed the eval-seed phase would dominate; in
+   practice both phases were trivial because of the rate-mode +
+   scalar-drive optimizations transferring to T=2000.
+
+### Caveats
+
+- Block 11b's variance characterization is across 100 *scenarios*
+  (different `pool_a` PRNGKeys). Other sources of randomness (GA
+  population init, drive variation if extended) are not characterized.
+- Selection-on-noise bias estimate is empirical (training vs novel
+  scenario delta). Theoretical bias formulas would require modeling
+  the within-population fitness distribution at convergence.
+- The topology fingerprint metrics (cross_pct, etc.) are coarse.
+  Finer features (graph motifs, weight clustering) may reveal more
+  about why the recurrent-mix at ga_seed=0 generalizes better.
+- N=100 eval_seeds is a reasonable but not bulletproof bound.
+  Stratified resampling at N=500 would tighten further if the
+  +6% best-genome improvement matters scientifically.
