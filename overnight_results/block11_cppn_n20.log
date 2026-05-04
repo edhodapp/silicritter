@@ -1,0 +1,84 @@
+[2026-05-04T08:14:25+00:00] block 11 CPPN-GA sweep: N=20 GAs x 2 conditions, pop=32, gens=30
+[2026-05-04T08:14:25+00:00] device: gpu / cuda:0
+[2026-05-04T08:14:25+00:00] already complete: 0 / 40
+[2026-05-04T08:14:25+00:00] start ga_seed=0 open_loop
+[2026-05-04T08:14:39+00:00]   done ga_seed=0 open_loop best_fit=-1.412e-04 wall=12.8s
+[2026-05-04T08:14:39+00:00] start ga_seed=0 closed_loop
+[2026-05-04T08:14:48+00:00]   done ga_seed=0 closed_loop best_fit=-4.923e-05 wall=9.1s
+[2026-05-04T08:14:48+00:00] start ga_seed=1 open_loop
+[2026-05-04T08:14:57+00:00]   done ga_seed=1 open_loop best_fit=-1.388e-04 wall=8.8s
+[2026-05-04T08:14:57+00:00] start ga_seed=1 closed_loop
+[2026-05-04T08:15:06+00:00]   done ga_seed=1 closed_loop best_fit=-5.315e-05 wall=9.0s
+[2026-05-04T08:15:06+00:00] start ga_seed=2 open_loop
+[2026-05-04T08:15:15+00:00]   done ga_seed=2 open_loop best_fit=-1.403e-04 wall=8.9s
+[2026-05-04T08:15:15+00:00] start ga_seed=2 closed_loop
+[2026-05-04T08:15:24+00:00]   done ga_seed=2 closed_loop best_fit=-5.373e-05 wall=9.1s
+[2026-05-04T08:15:24+00:00] start ga_seed=3 open_loop
+[2026-05-04T08:15:33+00:00]   done ga_seed=3 open_loop best_fit=-1.429e-04 wall=8.9s
+[2026-05-04T08:15:33+00:00] start ga_seed=3 closed_loop
+[2026-05-04T08:15:42+00:00]   done ga_seed=3 closed_loop best_fit=-5.324e-05 wall=9.1s
+[2026-05-04T08:15:42+00:00] start ga_seed=4 open_loop
+[2026-05-04T08:15:51+00:00]   done ga_seed=4 open_loop best_fit=-1.436e-04 wall=8.8s
+[2026-05-04T08:15:51+00:00] start ga_seed=4 closed_loop
+[2026-05-04T08:16:00+00:00]   done ga_seed=4 closed_loop best_fit=-5.505e-05 wall=9.0s
+[2026-05-04T08:16:00+00:00] start ga_seed=5 open_loop
+[2026-05-04T08:16:09+00:00]   done ga_seed=5 open_loop best_fit=-1.433e-04 wall=8.9s
+[2026-05-04T08:16:09+00:00] start ga_seed=5 closed_loop
+[2026-05-04T08:16:18+00:00]   done ga_seed=5 closed_loop best_fit=-5.494e-05 wall=9.1s
+[2026-05-04T08:16:18+00:00] start ga_seed=6 open_loop
+[2026-05-04T08:16:27+00:00]   done ga_seed=6 open_loop best_fit=-1.409e-04 wall=8.8s
+[2026-05-04T08:16:27+00:00] start ga_seed=6 closed_loop
+[2026-05-04T08:16:36+00:00]   done ga_seed=6 closed_loop best_fit=-5.417e-05 wall=9.1s
+[2026-05-04T08:16:36+00:00] start ga_seed=7 open_loop
+[2026-05-04T08:16:45+00:00]   done ga_seed=7 open_loop best_fit=-1.416e-04 wall=8.8s
+[2026-05-04T08:16:45+00:00] start ga_seed=7 closed_loop
+[2026-05-04T08:16:54+00:00]   done ga_seed=7 closed_loop best_fit=-5.394e-05 wall=9.1s
+[2026-05-04T08:16:54+00:00] start ga_seed=8 open_loop
+[2026-05-04T08:17:03+00:00]   done ga_seed=8 open_loop best_fit=-1.412e-04 wall=8.8s
+[2026-05-04T08:17:03+00:00] start ga_seed=8 closed_loop
+[2026-05-04T08:17:12+00:00]   done ga_seed=8 closed_loop best_fit=-5.373e-05 wall=9.0s
+[2026-05-04T08:17:12+00:00] start ga_seed=9 open_loop
+[2026-05-04T08:17:21+00:00]   done ga_seed=9 open_loop best_fit=-1.434e-04 wall=8.8s
+[2026-05-04T08:17:21+00:00] start ga_seed=9 closed_loop
+[2026-05-04T08:17:30+00:00]   done ga_seed=9 closed_loop best_fit=-5.405e-05 wall=9.0s
+[2026-05-04T08:17:30+00:00] start ga_seed=10 open_loop
+[2026-05-04T08:17:39+00:00]   done ga_seed=10 open_loop best_fit=-1.420e-04 wall=8.9s
+[2026-05-04T08:17:39+00:00] start ga_seed=10 closed_loop
+[2026-05-04T08:17:48+00:00]   done ga_seed=10 closed_loop best_fit=-5.473e-05 wall=9.2s
+[2026-05-04T08:17:48+00:00] start ga_seed=11 open_loop
+[2026-05-04T08:17:57+00:00]   done ga_seed=11 open_loop best_fit=-1.440e-04 wall=8.8s
+[2026-05-04T08:17:57+00:00] start ga_seed=11 closed_loop
+[2026-05-04T08:18:06+00:00]   done ga_seed=11 closed_loop best_fit=-5.240e-05 wall=9.1s
+[2026-05-04T08:18:06+00:00] start ga_seed=12 open_loop
+[2026-05-04T08:18:15+00:00]   done ga_seed=12 open_loop best_fit=-1.419e-04 wall=8.9s
+[2026-05-04T08:18:15+00:00] start ga_seed=12 closed_loop
+[2026-05-04T08:18:24+00:00]   done ga_seed=12 closed_loop best_fit=-5.495e-05 wall=9.1s
+[2026-05-04T08:18:24+00:00] start ga_seed=13 open_loop
+[2026-05-04T08:18:33+00:00]   done ga_seed=13 open_loop best_fit=-1.444e-04 wall=8.9s
+[2026-05-04T08:18:33+00:00] start ga_seed=13 closed_loop
+[2026-05-04T08:18:42+00:00]   done ga_seed=13 closed_loop best_fit=-5.522e-05 wall=9.1s
+[2026-05-04T08:18:42+00:00] start ga_seed=14 open_loop
+[2026-05-04T08:18:50+00:00]   done ga_seed=14 open_loop best_fit=-1.439e-04 wall=8.8s
+[2026-05-04T08:18:50+00:00] start ga_seed=14 closed_loop
+[2026-05-04T08:19:00+00:00]   done ga_seed=14 closed_loop best_fit=-5.451e-05 wall=9.1s
+[2026-05-04T08:19:00+00:00] start ga_seed=15 open_loop
+[2026-05-04T08:19:08+00:00]   done ga_seed=15 open_loop best_fit=-1.400e-04 wall=8.8s
+[2026-05-04T08:19:08+00:00] start ga_seed=15 closed_loop
+[2026-05-04T08:19:17+00:00]   done ga_seed=15 closed_loop best_fit=-5.529e-05 wall=9.0s
+[2026-05-04T08:19:17+00:00] start ga_seed=16 open_loop
+[2026-05-04T08:19:26+00:00]   done ga_seed=16 open_loop best_fit=-1.459e-04 wall=8.8s
+[2026-05-04T08:19:26+00:00] start ga_seed=16 closed_loop
+[2026-05-04T08:19:35+00:00]   done ga_seed=16 closed_loop best_fit=-5.413e-05 wall=9.0s
+[2026-05-04T08:19:35+00:00] start ga_seed=17 open_loop
+[2026-05-04T08:19:44+00:00]   done ga_seed=17 open_loop best_fit=-1.428e-04 wall=8.8s
+[2026-05-04T08:19:44+00:00] start ga_seed=17 closed_loop
+[2026-05-04T08:19:53+00:00]   done ga_seed=17 closed_loop best_fit=-5.455e-05 wall=9.1s
+[2026-05-04T08:19:53+00:00] start ga_seed=18 open_loop
+[2026-05-04T08:20:02+00:00]   done ga_seed=18 open_loop best_fit=-1.417e-04 wall=8.9s
+[2026-05-04T08:20:02+00:00] start ga_seed=18 closed_loop
+[2026-05-04T08:20:11+00:00]   done ga_seed=18 closed_loop best_fit=-5.370e-05 wall=9.1s
+[2026-05-04T08:20:11+00:00] start ga_seed=19 open_loop
+[2026-05-04T08:20:20+00:00]   done ga_seed=19 open_loop best_fit=-1.420e-04 wall=8.8s
+[2026-05-04T08:20:20+00:00] start ga_seed=19 closed_loop
+[2026-05-04T08:20:29+00:00]   done ga_seed=19 closed_loop best_fit=-5.346e-05 wall=9.1s
+[2026-05-04T08:20:29+00:00] block 11 complete: total wall 363.6s

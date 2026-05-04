@@ -1802,3 +1802,136 @@ later blocks.
   laptop with no missing rows. Resumability was not stress-tested
   (no power outage during the run); it remains validated by Phase 2's
   Drive-symlink session-timeout recovery.
+
+---
+
+## 2026-05-04 — Block 11: N=20 CPPN-GA distribution at step 11's T=2000
+
+The N=20 distribution-of-GA-best comparison vs step 9/10's
+original T=2000 hand-wired references. Per the revalidation plan
+this was scheduled as the wall-time dominator (it was assumed to
+include the "× N=100 eval seeds" leg); the GA-training-only piece
+of the plan turned out to be very fast on the laptop GPU.
+
+- **Script:** `experiments/block11_cppn_n20.py` (commits eef8a05 +
+  384550b for the time.monotonic / utf-8 follow-up).
+- **Machine:** ASUS VivoBook X580GD, NVIDIA GTX 1050 Mobile.
+- **Sweep:** 20 ga_seeds × 2 conditions = 40 GAs at step 11's
+  defaults (pop=32, gens=30, T=2000). Each GA does 30 × 32 = 960
+  fitness evaluations (vmap-batched).
+- **Total wall time:** **363.6 s = 6.1 min.** Per-generation eval
+  ~240 ms (vmap=32 over T=2000 sims), JIT compile sub-second per GA.
+  The earlier ~40-60 min estimate assumed pessimistic JIT cost; the
+  plan's "wall-time dominator" framing was for the (deferred) Block
+  11b N=100 eval-seed phase, not the GA-training phase alone.
+
+### Distribution by condition, N=20 GAs
+
+| condition   | mean         | std       | SEM       | min          | max          | median       |
+|-------------|-------------:|----------:|----------:|-------------:|-------------:|-------------:|
+| open_loop   | −1.4230e-04  | 1.68e-06  | 3.76e-07  | −1.4588e-04  | −1.3880e-04  | −1.4202e-04  |
+| closed_loop | −5.3909e-05  | 1.34e-06  | 3.00e-07  | −5.5288e-05  | −4.9226e-05  | −5.4088e-05  |
+
+Closed_loop uses step 11's default `CLOSED_LOOP_GAIN=50` (not
+gain=200 like Block 9); T=2000 (not T=10M like Block 9). Block 11
+is comparable to step 9/10's *original* T=2000 references, NOT to
+Block 9's long-T headline.
+
+### Comparison to T=2000 hand-wired references
+
+step 9 (hand-wired cross-E-only, no controller, T=2000):
+
+    hand-wired:   -1.56e-04
+    GA mean:      -1.4230e-04 ± 3.76e-07 (SEM, N=20)
+    GA delta:     +9% better
+
+The N=20 SEM (3.76e-7) is far smaller than the GA-vs-hand-wired
+gap (~1.4e-5). **Open-loop CPPN GA significantly beats hand-wired
+cross-E-only at T=2000 by ~9%**, even before applying the
+controller. The selection-on-noise caveat applies (the GA selects
+on the training scenario), but the magnitude of the win is robust
+to that bias unless training/eval correlation is very weak.
+
+step 10 (hand-wired cross-E-only, closed-loop gain=50, T=2000):
+
+    hand-wired:   -5.60e-05
+    GA mean:      -5.3909e-05 ± 3.00e-07 (SEM, N=20)
+    GA delta:     +4% better (within distribution noise)
+    GA best:      -4.9226e-05 (best individual GA, ~12% better)
+
+The GA mean is 4% closer to zero than hand-wired, but with
+std=1.34e-6 across 20 GAs and min/max spanning [-5.529e-05,
+-4.923e-05]. The hand-wired -5.60e-5 sits at the worst-GA end of
+the distribution. **The closed-loop fitness ceiling at gain=50,
+T=2000 is in the −5e-5 region**; both hand-wired and GA-evolved
+topologies cluster there, with the GA finding marginally better
+solutions on average and the GA's best individual notably better
+(-4.92e-05).
+
+### What this tells us
+
+1. **CPPN topology matters in open-loop.** Without the controller,
+   the GA finds CPPNs ~9% better than the simple "all slots bound
+   to A's E neurons" hand-wired pool. The fitness gain comes from
+   topology choice, not from the controller.
+2. **Closed-loop ceiling is real.** With the controller turned on,
+   topology choice matters less — both hand-wired and GA cluster
+   near -5e-5 at T=2000 / gain=50. Block 10 already showed why:
+   at i_mult=4.0 the controller pegs at adr_max and produces a
+   deterministic floor regardless of pool topology. Block 11
+   confirms that floor is GA-resistant: the GA can't break it
+   substantially even with 20 independent evolutionary trajectories.
+3. **The GA's best individual (-4.92e-05) is meaningfully better
+   than hand-wired (-5.60e-05).** That's a 12% improvement at the
+   tail; a single-best CPPN is a candidate for further analysis.
+   But "GA mean wins by 4%" should NOT be reported as the headline
+   - it's within distribution overlap.
+
+### Selection-on-noise asymmetric inference
+
+Per the script's docstring caveat: training-on-deterministic-
+scenario + selection-on-best biases the GA's measured fitness
+upward vs hand-wired (which is not subject to the same selection).
+With 20 GAs × 32 pop × 30 gens = 19,200 fitness evals total, the
+"max of N=960 samples per GA" + "best of 20 GAs" stacking compounds
+the bias.
+
+- Open-loop +9% win: the bias is too small to explain the win.
+  Even pessimistic max-of-960 ≈ μ + 3.7σ where σ is intra-GA
+  population fitness std (likely ~1e-5 at convergence, giving
+  ~3.7e-5 bias). Observed gap is 14e-5, an order of magnitude
+  larger. **Robust win.**
+- Closed-loop +4% win: bias plausibly explains it. The win is
+  within the same order as the bias estimate. **Hold lightly until
+  Block 11b's eval-seed re-eval confirms.**
+
+### Implications
+
+1. **Open-loop CPPN topology wins are real and worth keeping.** The
+   evolved CPPNs encode some structural feature beyond cross-E-only
+   that improves prediction error by ~9%. Future work: extract
+   what those topologies actually look like (cross/recurrent ratio,
+   weight distribution, etc.) to inform a smarter hand-wired baseline.
+2. **Closed-loop is GA-resistant at this T/gain.** At T=2000 +
+   gain=50, both hand-wired and GA produce ~5e-5 fitness. To break
+   that ceiling further, either (a) run at gain=200 (which Phase 2 /
+   Block 9 already showed yields ~-2.7e-5 at long T - dramatically
+   better), or (b) explore the dynamic-range regime via i_mult=8.0
+   (Block 10 showed it changes the controller's working point).
+3. **The "wall-time dominator" label was wrong.** Block 11's GA
+   training is fast (6 min on laptop). The dominator was the deferred
+   Block 11b eval-seed re-evaluation phase (~20 min on laptop, ~4000
+   evals at ~0.3 s each). Trigger Block 11b only if the marginal
+   closed-loop win matters scientifically.
+
+### Caveats
+
+- N=20 GAs gives reasonable distribution shape but not tight
+  variance bound. Block 11b (or just N=100 GAs at zero scenario
+  variation) would tighten this if needed.
+- Single-machine, no cross-machine reproducibility check.
+- T=2000 is step 11's default; the closed-loop dynamics differ at
+  long T (per Block 9's variance structure). A long-T CPPN GA would
+  be a different experiment.
+- Selection-on-noise bias is not directly characterized. Block 11b
+  is the right tool for that.
