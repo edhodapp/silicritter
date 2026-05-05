@@ -58,7 +58,7 @@ Each step is a self-contained runnable. See `perf_history.md` for measured numbe
 - **`step07_*.py` / `step07e_paired_cppn_n256.py`** — Paired-agent signal-following; direct and CPPN encodings at N=256.
 - **`step09_handwired_n256_ei.py`** — E/I substrate validation at canonical values (D007).
 - **`step10_closedloop_adrenaline.py`** — Closed-loop adrenaline breaks the static 30 Hz firing-rate ceiling; multi-seed confirms result is seed-independent.
-- **`step11_cppn_closedloop.py`** — CPPN GA + E/I + closed-loop. Open-loop CPPN beats hand-wired cross-E-only by 10%; closed-loop CPPN discovers an 87.9% cross / 12.1% recurrent topology that beats hand-wired closed-loop by 12%.
+- **`step11_cppn_closedloop.py`** — CPPN GA + E/I + closed-loop. After the Block 11 + Block 11b revalidation: all 20 open-loop GAs converge to the bit-identical hand-wired cross-E-only pattern; on novel scenarios open-loop GA is within 2% of hand-wired in the *worse* direction — no GA-only open-loop discovery (DISCOVERIES.md X004). One closed-loop GA (ga_seed=0) evolved an 87.9% cross-E / 12.1% recurrent topology, ~6% better than hand-wired on novel scenarios — real but smaller than Block 11's training-fit suggested (DISCOVERIES.md X005). The +9% / +12% wins originally reported from training-only fits were largely selection-on-noise bias (X006).
 - **`step12_tonic_sweep.py`** — Peeled tonic drive down from 16 mV. Tonic is load-bearing: closed-loop extends viable range to ~8 mV, then hits a physics cliff (sub-threshold neurons can't be rescued by shortening τ_m).
 - **`step13_ei_perturbation.py`** — 5×5 grid of (inhibitory_fraction, i_weight_multiplier) around D007. Multi-seed comparison produced D008, tightening to `(0.2, 8.0)`.
 - **`step14_fgn_stimulus.py`** — fGn-driven A at H ∈ {0.3, 0.5, 0.7, 0.9}. Architecture fitness is H-dependent but stumbles through variance regimes rather than exploiting memory structure.
@@ -308,7 +308,9 @@ tracking slots, not uniform.
 
 **But STDP alone is bounded.** Post-training fitness at rate=1.0
 is ~−2.2e−4, still ~4× worse than step 10's hand-wired
-cross-E-only (−5.6e−5). The reason is structural: STDP adjusts
+cross-E-only (−5.6e−5 at the original T=2000 single-seed; the
+later N=500 long-T headline is −2.7284e-05, see DISCOVERIES.md
+X001). The reason is structural: STDP adjusts
 `v`, not `pre_ids`. With uniform-random initialization, ~50% of
 slots sit on B→B recurrent targets and ~10% on B→A-I
 inhibitory targets. STDP can drive those weights to zero but
@@ -361,6 +363,55 @@ Memory at T=10M: 5.0 GB → 80 MB (`step17`), 5.0 GB → 120 MB
 **Resumes from:** N=100 / N=500 revalidation batches with the
 raster-retention fix in place, starting with step 10
 hand-wired closed-loop as the root of the risk graph.
+
+### 2026-04-29 → 2026-05-04 — Revalidation arc complete
+
+The paused arc resumed and ran to completion across Phase 2
+(N=5 long-T toolchain validation on Colab A100), Block 9
+(N=500 long-T headline, on the laptop GTX 1050 in 45 hours),
+Block 10 (N=100 E/I reanchor, on the laptop in 2 minutes), and
+Blocks 11 + 11b (CPPN-GA distribution + topology + 100-eval-seed
+re-eval, on the laptop in 6 + 30 minutes).
+
+**Six discoveries catalogued in `DISCOVERIES.md` (X001–X006):**
+
+- **X001** Step 10 closed-loop headline is **−2.7284e-05 ± 7.2e-11**
+  (N=500, T=10M, gain=200), superseding the original N=1
+  −5.60e-05. The 5.8× improvement vs open-loop is bounded to
+  better than 1 part in 1000.
+- **X002** D008's `i_mult=8.0` adoption is correct, and the
+  *mechanism* is "controller dynamic range," not "more
+  inhibition is intrinsically better": at i_mult=4.0 the
+  controller rails at `adr_max` and produces a deterministic
+  fitness floor (std=4e-11 across 100 seeds); at i_mult=8.0 the
+  controller has working range (std=5e-7).
+- **X003** The same rail-clipped/controllable dichotomy
+  generalizes from E/I-space to T-space — at fixed i_mult/gain,
+  some T values produce 500-seed bit-identical trajectories,
+  others show seed variance. Likely tied to the EMA τ vs A-drive
+  segment-length T/4 ratio.
+- **X004** The open-loop CPPN GA converges bit-identically to
+  the hand-wired pattern (100% cross-E, v=V_MAX); on novel
+  scenarios it's within 2% of hand-wired in the *worse*
+  direction. Future open-loop work doesn't need GA exploration.
+- **X005** One closed-loop GA (ga_seed=0) evolved a
+  recurrent-mix topology (12.1% recurrent slots vs 0% for
+  hand-wired); ~6% better than hand-wired on novel scenarios.
+  Real but smaller than the training-fit number suggested.
+- **X006** Selection-on-noise bias was empirically large
+  (+11.9% open-loop, +3% closed-loop in Block 11). "GA wins"
+  claims require eval-seed re-evaluation; "GA loses" is robust
+  without it. Methodological rule for future GA-vs-baseline
+  comparisons.
+
+Per-block detail in `perf_history.md` (entries 2026-04-29
+through 2026-05-04). Raw data in `overnight_results/`.
+
+**Open follow-up tasks:** Block 12 (fGn Hurst sweep at N=100 ×
+4 H values), Block 13 (STDP rate sweep — partially covered by
+overnight_batch blocks 4/5 already), and X005 follow-up
+(does the recurrent-mix generalize to D008's i_mult=8.0 / long T?
+could it be hand-coded into a smarter baseline?).
 
 ---
 
