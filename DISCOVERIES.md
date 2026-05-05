@@ -1,0 +1,325 @@
+# Empirical Discoveries Log
+
+Chronological record of *empirical* discoveries from silicritter's
+experiments — findings the data revealed that weren't pre-decided by
+design. Sister file to `DECISIONS.md` (architectural decisions) and
+`perf_history.md` (full per-run measurements).
+
+Each entry captures the discovery, the evidence, and the implications.
+Entries are numbered sequentially (`X001`, `X002`, ...) and never
+renumbered.
+
+**Entries are immutable in content.** Once written, the discovery
+text and evidence are never edited or deleted - the log is a
+historical record of what we learned and when. If a discovery is
+later contradicted by stronger evidence, the supersession protocol
+below applies.
+
+## What belongs here vs in DECISIONS.md vs perf_history.md
+
+- **DECISIONS.md** = architectural / design choices we *made* (E/I
+  defaults, controller params, project license, etc.). Inputs to
+  experiments.
+- **perf_history.md** = full empirical record per run (numbers,
+  caveats, configuration). The raw scientific log.
+- **DISCOVERIES.md** = condensed *findings* — what the experiments
+  *taught us* that wasn't decided in advance. The "if you only read
+  one document to know what silicritter has actually demonstrated"
+  file.
+
+## Supersession and traceability
+
+When a discovery is revised or reversed by stronger evidence, both
+entries are linked. Same convention as `DECISIONS.md`:
+
+1. New entry `X00N` opens with a back-pointer: `**Supersedes:** X003
+   (deprecated YYYY-MM-DD HH:MM UTC). [reason]`.
+2. Superseded entry `X003` gets an append-only deprecation
+   annotation prepended: `**DEPRECATED YYYY-MM-DD HH:MM UTC -
+   superseded by X00N.** [reason]`. The original body stays exactly
+   as written, below the annotation.
+
+Chained supersessions annotate every link so a reader landing on any
+entry can follow the chain in one step.
+
+---
+
+## 2026-05-03
+
+### X001: Step 10 closed-loop headline is **−2.7284e-05 ± 7.2e-11**, not −5.60e-05
+
+**Supersedes informal claim:** step 10's original write-up reported
+"−5.60e-05 hand-wired closed-loop breakthrough" (N=1, T=2000). Phase
+2 + Block 9 confirm the qualitative improvement but at a different
+number after the controller has time to equilibrate.
+
+**Evidence:** `overnight_results/block9_step10_n500.csv` (4000 rows),
+`perf_history.md` 2026-05-03 entry. N=500 seeds, T=10M, gain=200, on
+the GTX 1050 Mobile, 45 hours wall.
+
+    open_loop  T=10M N=500: -1.5888e-04 ± 3.19e-08 (SEM)
+    gain=200   T=10M N=500: -2.7284e-05 ± 7.19e-11 (SEM)
+    ratio:     5.825x improvement, bounded to <1/1000
+
+Phase 2 (N=5) was already at 5-sig-fig agreement with Block 9's
+N=500 mean (−2.728288e-05 vs −2.7284e-05). The Phase 2 N=5 anchor
+was already converged at the precision the seed sweep allows;
+rail-clipping at gain=200 makes most seeds produce the exact same
+trajectory.
+
+**Why the original number differed:** step 10's −5.60e-05 was a
+single-seed measurement at T=2000. The EMA controller (decay=0.98,
+τ ≈ 50 steps) is barely settled within the 4-segment stimulus
+profile of length T/4 = 500 steps each. At T ≥ 100k the controller
+has thousands of cycles to equilibrate; the steady-state fitness is
+materially better than the transient-dominated short-T number.
+
+**Implications:**
+
+- Any silicritter paper / external claim should use **−2.7284e-05**
+  as the headline closed-loop fitness number for the hand-wired
+  cross-E-only B pool at gain=200, T=10M.
+- The 5.8× improvement framing (vs open-loop) holds and tightens.
+- Future blocks should evaluate at long T by default; T=2000 is a
+  smoke-test scale, not a publication-grade scale.
+
+---
+
+## 2026-05-01
+
+### X002: D008's mechanism is "controller dynamic range," not "more inhibition"
+
+**Evidence:** `overnight_results/block10_step13_ei_n100.csv` (400
+rows), `perf_history.md` 2026-05-01 entry. N=100 multi-seed
+comparison of `i_mult=4.0` (prior canonical) vs `i_mult=8.0` (D008)
+at step 13's T=2000, closed-loop gain=50.
+
+The fitness improvement (D008 vs canonical, +12.4% closed-loop) was
+already established. Block 10 surfaces the *mechanism*, only visible
+at N≥30:
+
+| `i_mult` | mean fitness   | std across seeds |
+|----------|---------------:|------------------|
+| 4.0      | −5.595e-05     | **3.98e-11**     |
+| 8.0      | −4.904e-05     | 4.97e-07         |
+
+At i_mult=4.0, **all 100 seeds give bit-identical fitness** (std =
+4e-11, ~12 orders of magnitude smaller than open-loop std). The
+controller saturates `adr_max` for the entire run and produces the
+same trajectory regardless of pool randomization - a deterministic
+fitness *floor*, not an optimum.
+
+At i_mult=8.0, std jumps to 5e-07 (same order as open-loop noise
+floor). **The controller is no longer rail-clipped.** Stronger
+inhibition makes B harder to drive; when A's drive demands push B
+up, the controller works *within* `[adr_min, adr_max]` instead of
+saturating.
+
+**Therefore:** D008's win isn't "more inhibition is intrinsically
+better in a flat sense." It's "the controller has somewhere to work,
+so it actually works." This pattern - rail-clipped under one
+parameter regime, controllable under another - is a generalizable
+structural feature of the silicritter substrate, not an artifact of
+this specific E/I sweep (see X003).
+
+**Implications:**
+
+- D008's `(0.2, 8.0)` adoption (per DECISIONS) is correct; the
+  rationale is now mechanistic rather than empirical-only.
+- When tuning controller parameters or operating points in future
+  blocks, ask: *is the controller in its working range, or is it
+  railing?* If railing, raw fitness is a deterministic floor that
+  doesn't reflect the controller's contribution.
+- The N=20 anchor that originally informed D008 was too small to
+  resolve the std=0 vs std=5e-7 separation; this finding required
+  N≥30. Future load-bearing-claim runs should default to N≥100.
+
+---
+
+## 2026-05-03
+
+### X003: Rail-clipped/controllable structure generalizes from E/I-space to T-space
+
+**Evidence:** `overnight_results/block9_step10_n500.csv`,
+`perf_history.md` 2026-05-03 entry. The same i_mult=4.0 / gain=200
+operating point that produces deterministic rail-clipping at one T
+shows seed variance at another:
+
+| T          | closed-loop std (N=500) | regime          |
+|------------|------------------------:|-----------------|
+| 10 000     | **0.000**               | rail-clipped    |
+| 100 000    | 1.67e-09                | controllable    |
+| 1 000 000  | **0.000**               | rail-clipped    |
+| 10 000 000 | 1.61e-09                | controllable    |
+
+The pattern alternates: T=10k and T=1M show 500-seed bit-identical
+trajectories; T=100k and T=10M show tiny seed variance. Same i_mult,
+same gain - only T changes, yet the controller's working regime
+flips between rail-clipped and controllable.
+
+**Mechanism (hypothesized):** the EMA controller's time constant
+(τ ≈ 50 steps from decay=0.98) interacts with the A-drive profile's
+segment length (T/4). At T=10k segments are 2500 steps (50τ); at
+T=100k segments are 25000 steps (500τ); etc. Whether the
+controller's per-segment transient dominates or vanishes within a
+segment determines the regime.
+
+**Implications:**
+
+- The X002 mechanism is a property of the controller-substrate
+  interaction at *operating-point granularity*, not unique to the
+  E/I axis. Expect the same dichotomy along any controller-relevant
+  axis (gain, decay, A-drive amplitude, etc.).
+- For block design at this operating point: assume some T values
+  will produce zero-variance rail-clipped trajectories. Variance
+  estimates at those T values are floor measurements, not noise
+  measurements.
+- A formal analysis of the τ-vs-segment-length interaction would
+  let us *predict* which T values rail-clip without running them.
+  Worth a follow-up if it bears on Block 12+.
+
+---
+
+## 2026-05-04
+
+### X004: Open-loop CPPN GA does not find topology better than hand-wired
+
+**Evidence:** `overnight_results/block11_cppn_n20.csv` (40 rows),
+`overnight_results/block11b_genome_stats.csv` (40 rows),
+`overnight_results/block11b_eval_seeds.csv` (4000 rows),
+`perf_history.md` 2026-05-04 entries (Block 11 + Block 11b).
+
+Block 11 ran a CPPN GA on 20 independent seeds for both open-loop
+and closed-loop conditions. Reported "+9% open-loop GA win" vs
+hand-wired. **That was selection-on-noise bias.**
+
+Block 11b's Phase 2 topology fingerprinting:
+
+    All 20 open-loop GAs converged to bit-identical pattern:
+        cross_pct       = 100.0  (vs 100 hand-wired)
+        cross_e_pct     = 100.0
+        cross_i_pct     =   0.0
+        recurrent_pct   =   0.0
+        v_mean          =   1.997
+        v_std           =   0.002
+
+This is the hand-wired pattern, encoded as a CPPN.
+
+Block 11b's Phase 3 novel-scenario re-evaluation (100 eval_seeds,
+varying `pool_a`'s PRNGKey from training's PRNGKey(777)):
+
+    Block 11 training:        -1.4230e-04 (N=20 ga_seeds)
+    Block 11b novel scenarios: -1.5923e-04 (N=2000 evals)
+    Hand-wired (step 9):      -1.5600e-04
+
+The 11.9% downward shift between training and eval is the bias.
+Open-loop GAs perform **within 2% of hand-wired** on novel
+scenarios, in the *worse* direction (−1.59e-04 vs −1.56e-04).
+
+**Therefore:** the GA finds the hand-wired pattern as the
+open-loop optimum; there's no GA-only open-loop discovery.
+
+**Implications:**
+
+- Future open-loop topology work doesn't need GA exploration to
+  confirm topology choice; the hand-wired cross-E-only pattern is
+  the answer.
+- Reporting Block 11 alone (without Block 11b's eval-seed phase)
+  would have shipped a false-positive open-loop finding. The
+  asymmetric inference rule held in real life: "GA wins"
+  measurements need novel-scenario validation.
+
+---
+
+## 2026-05-04
+
+### X005: Closed-loop CPPN GA at ga_seed=0 finds a recurrent-mix topology, ~6% better than hand-wired
+
+**Evidence:** `overnight_results/block11b_genome_stats.csv` row
+`ga_seed=0, condition=closed_loop`,
+`overnight_results/block11b_eval_seeds.csv` rows for that genome,
+`perf_history.md` 2026-05-04 Block 11b entry.
+
+Block 11b's per-genome topology fingerprint identified one
+closed-loop GA (ga_seed=0) with a structural pattern hand-wiring
+never used:
+
+    cross_pct       = 87.9    (vs 100 hand-wired)
+    cross_e_pct     = 87.9
+    cross_i_pct     =  0.0
+    recurrent_pct   = 12.1    (NEW: hand-wired is 0)
+    v (all near saturation, std=0.003 within pool)
+
+On the training scenario this beat hand-wired by 12% (−4.92e-05 vs
+−5.60e-05). On 100 novel scenarios its mean is around −5.27e-05 -
+**~6% better than hand-wired (−5.60e-05)**, smaller than the
+training-fit suggested but real.
+
+This is the *only* closed-loop genome with a meaningful recurrent
+fraction; the other 19 closed-loop GAs have recurrent_pct in
+[0, ~3%] (mean 1.4%, but most cluster near 0 with a few outliers
+above).
+
+**Implications:**
+
+- The recurrent-mix is a real, replicable, topology-driven
+  improvement. Worth investigating whether it generalizes:
+  - Does it still beat hand-wired at D008's i_mult=8.0 (where
+    Block 10 showed the controller has dynamic range)?
+  - Does it survive at long T (Block 9-style T=10M evaluation)?
+  - Could the recurrent slots be hand-coded into a smarter
+    baseline that captures the GA's discovery without re-running
+    the GA?
+- Block 11b's Phase 1 captured this genome's CPPN weights to
+  `block11b_genomes.pkl`; the genome is recoverable for further
+  analysis without re-running the GA.
+
+---
+
+## 2026-05-04
+
+### X006: Selection-on-noise bias is empirically large in CPPN-GA training; eval-seed re-evaluation is mandatory for "GA wins" claims
+
+**Evidence:** Block 11 (training) vs Block 11b (eval) deltas in
+`perf_history.md` 2026-05-04 entries.
+
+Block 11 trained 40 GAs on a single deterministic scenario
+(PRNGKey(777)) and reported the best fitness of each. Block 11b
+re-evaluated each evolved genome on 100 different scenarios and
+measured the delta:
+
+| condition   | training (Block 11) | novel (Block 11b) | bias  |
+|-------------|---------------------|-------------------|-------|
+| open_loop   | −1.4230e-04         | −1.5923e-04       | +11.9% |
+| closed_loop | −5.3909e-05         | −5.5516e-05       | +3.0%  |
+
+The +11.9% open-loop bias is large enough to flip the conclusion
+(see X004). The +3.0% closed-loop bias was within the +4% headline
+"GA mean win" Block 11 reported, leaving only ~0.9% real
+improvement at the *mean* level (the best-individual story is
+X005's separate finding).
+
+**Mechanism:** maximum-of-N stack (max of 32 pop × 30 gens × 20
+GAs) selects the population member best at the deterministic
+training scenario. With deterministic training, that maximum is
+upward-biased by ~σ × √(2 ln N) where σ is intra-population
+fitness std at convergence. Empirically here: bias is order of
+magnitude 1e-5 in the open-loop case.
+
+**Implications (methodological, applies to any future GA in this codebase):**
+
+- **"GA wins" findings require eval-seed re-evaluation.** The
+  asymmetric inference rule:
+  - "GA loses" is robust if measured (the bias direction makes
+    the true value at least as bad as the training fit).
+  - "GA wins" must be validated on novel scenarios; the bias
+    direction makes the training fit better than the true value.
+- Future GA scripts should bake in the eval-seed re-eval phase
+  by default (Block 11b is the prototype). A "Block X" without a
+  "Block Xb" eval-seed companion is incomplete for any
+  comparison-against-baseline claim.
+- The Block 11 / Block 11b decoupling worked but added a separate
+  authoring + commit + launch cycle. For Block 12+ consider
+  combining eval-seed re-eval into the main GA script if the
+  workload size permits (Block 11b's 4000-eval phase took 24 min
+  on the laptop - cheap enough to include by default).
