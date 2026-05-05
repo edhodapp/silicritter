@@ -2086,3 +2086,107 @@ suggested.
 - N=100 eval_seeds is a reasonable but not bulletproof bound.
   Stratified resampling at N=500 would tighten further if the
   +6% best-genome improvement matters scientifically.
+
+---
+
+## 2026-05-05 — Block 12: N=100 fGn Hurst sweep, step 14 claims revised
+
+The N=100 multi-seed reanchor of step 14's single-seed Hurst sweep.
+Step 14 reported H-dependent closed-loop tracking; Block 12 puts SEM
+on each cell and revises two specific quantitative claims while
+confirming the directional pattern.
+
+- **Script:** `experiments/block12_fgn_n100.py` (commit 2ee9c81).
+- **Machine:** ASUS VivoBook X580GD, NVIDIA GTX 1050 Mobile.
+- **Sweep:** 4 H × 100 seeds (stride 37) × 2 conditions (open_loop,
+  closed_loop gain=50) = 800 runs at step 14's T=2000, D008's
+  i_mult=8.0.
+- **Total wall time:** **267.7 s = 4.5 min.** Per-run wall ~0.3 s,
+  matching the established laptop GTX 1050 baseline at T=2000.
+
+### Tracking and prediction fitness by (H, condition), N=100
+
+| H   | condition   | N   | track mean ± SEM         | pred mean ± SEM          |
+|-----|-------------|-----|--------------------------|--------------------------|
+| 0.3 | open_loop   | 100 | −8.1913e-05 ± 4.21e-07   | −8.6029e-05 ± 4.50e-07   |
+| 0.3 | closed_loop | 100 | **−5.1160e-06 ± 2.77e-07** | −9.5328e-06 ± 2.98e-07 |
+| 0.5 | open_loop   | 100 | −8.2806e-05 ± 6.53e-07   | −8.7511e-05 ± 6.99e-07   |
+| 0.5 | closed_loop | 100 | **−6.3929e-06 ± 4.26e-07** | −1.2661e-05 ± 6.81e-07 |
+| 0.7 | open_loop   | 100 | −8.3091e-05 ± 1.30e-06   | −9.0241e-05 ± 1.42e-06   |
+| 0.7 | closed_loop | 100 | **−7.4726e-06 ± 5.31e-07** | −2.6243e-05 ± 1.46e-06 |
+| 0.9 | open_loop   | 100 | −8.9041e-05 ± 4.38e-06   | −1.0161e-04 ± 4.39e-06   |
+| 0.9 | closed_loop | 100 | **−8.0862e-06 ± 5.29e-07** | −3.8189e-05 ± 1.40e-06 |
+
+### Closed-loop tracking improvement vs open-loop, by H
+
+| H   | open_loop   | closed_loop | improvement ratio |
+|-----|-------------|-------------|-------------------|
+| 0.3 | −8.19e-05   | −5.12e-06   | **16.0×**         |
+| 0.5 | −8.28e-05   | −6.39e-06   | **13.0×**         |
+| 0.7 | −8.31e-05   | −7.47e-06   | **11.1×**         |
+| 0.9 | −8.90e-05   | −8.09e-06   | **11.0×**         |
+
+**Step 14's docstring claim was "20-30× tracking improvement at every H."**
+At N=100 the actual range is **11-16×.** Step 14's N=1 numbers were
+upper-tail of the distribution; the multi-seed mean is materially
+lower. Still an order of magnitude improvement, but not 20-30×.
+
+### Lag-1 autocorrelation of A's drive by H (fGn theory check)
+
+| H   | mean lag1 | range          | theory direction       |
+|-----|-----------|----------------|------------------------|
+| 0.3 | −0.219    | [−0.62, +0.20] | anti-persistent (H<0.5) |
+| 0.5 | −0.046    | [−0.47, +0.47] | neutral (H=0.5)        |
+| 0.7 | +0.142    | [−0.36, +0.69] | persistent (H>0.5)     |
+| 0.9 | +0.327    | [−0.17, +0.80] | strongly persistent    |
+
+Textbook fGn behavior: H<0.5 is anti-persistent (negative lag-1
+correlation), H=0.5 is uncorrelated noise, H>0.5 is persistent
+(positive correlation, growing with H). The fGn drive trace
+implementation in `silicritter.fracnoise` is doing what theory
+predicts at every H value tested.
+
+### Step 14's specific claims, revised
+
+Step 14 docstring: *"Closed-loop tracking is 3× worse at H=0.7 than
+at H=0.5."*
+
+- **Block 12 N=100:** H=0.5 closed-loop track = −6.39e-06; H=0.7 =
+  −7.47e-06. **Ratio: 1.17×** worse at H=0.7. SEM bounds are tight
+  (~4-5e-07); the difference is statistically clear but the
+  *magnitude* step 14 reported was an outlier-driven artifact of
+  the N=1 measurement.
+
+Step 14 docstring: *"prediction-minus-tracking gap at H=0.9 (−1.71e−5)
+is 4× the gap at H=0.5."*
+
+- **Block 12 N=100:** H=0.5 gap = pred − track = −1.27e-5 − (−6.39e-6)
+  = −6.27e-06. H=0.9 gap = −3.82e-5 − (−8.09e-6) = −3.01e-05.
+  **Ratio: 4.8×.** Step 14's directional claim holds; the
+  magnitude is slightly larger than reported and now bounded by SEM.
+
+### Implications
+
+1. **The closed-loop adrenaline controller's tracking advantage
+   over open-loop is robust across stimulus regimes.** 11-16× at
+   every H tested. The substrate works as a fGn-tracker even at
+   anti-persistent (H=0.3) and strongly-persistent (H=0.9) extremes.
+2. **Prediction (one-window-ahead) IS H-dependent.** Closed-loop
+   prediction degrades 4× from H=0.3 to H=0.9, and the gap between
+   tracking and prediction grows with H. This is the genuine fGn
+   finding worth keeping; step 14 surfaced it correctly even at
+   N=1.
+3. **Step 14's tracking-improvement-ratio numbers need updating
+   in the README/docs.** The 20-30× framing is wrong; 11-16× is
+   correct. Prediction-gap framing is correct directionally.
+4. **fGn theory passes a sanity check.** The lag-1 autocorrelation
+   pattern across H matches theoretical prediction.
+
+### Caveats
+
+- N=100 is a reasonable variance bound; for headline-grade claims
+  consider N=500 (parallel to Block 9's discipline). At Block 12's
+  ~5-min wall on the laptop, N=500 would be ~25 min - cheap to
+  do if any of these numbers go into a paper.
+- Single machine, single run.
+- Wall-time numbers (4.5 min total) are GTX 1050 Mobile-specific.
