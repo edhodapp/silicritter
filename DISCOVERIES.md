@@ -410,3 +410,45 @@ Blocks 9/10/11 (per-row CSV append, resume, MAX_CONSECUTIVE_FAILURES,
 cross-file regression test for `s14._run_condition` signature).
 Wall time was trivial (4.5 min) so N=500 would be cheap if any
 Block 12 number ever needs to be the headline of a paper claim.
+
+---
+
+## 2026-05-05
+
+### X008: Step 16 STDP improvement at rate=1.0 is **+15.96% ± 0.27% (95% CI, N=100)**, not +14%
+
+**Supersedes informal claim:** the README dev log called it
+"+14% at rate=1.0" (single-seed measurement). Block 13 confirms
+the qualitative finding and tightens the magnitude.
+
+**Evidence:** `overnight_results/block13_stdp_n100.csv` (100 rows),
+`perf_history.md` 2026-05-05 entry. N=100 seeds (stride 37) at
+rate=1.0, init_v=1.0, closed-loop gain=50, D008 i_mult=8.0,
+T_train=20k, T_measure=2k. 2.5-min wall on the GTX 1050 Mobile.
+
+    fit_before:      -2.6858e-04 +/- 7.93e-07 (SEM)
+    fit_after:       -2.2567e-04 +/- 6.41e-07 (SEM)
+    improvement_pct: +15.96      +/- 0.14     (SEM)
+                     +15.96      +/- 0.27     (95% CI)
+
+All 100 seeds show **positive** improvement (range [+13.05%,
++20.12%]). The +14% original was at the lower tail; the
+distribution mean is ~16%.
+
+**Implications:**
+
+- README's step 16 description should cite **+16% (95% CI ±0.27%)**
+  rather than the original +14%. The directional claim ("STDP at
+  rate=1.0 produces post-training improvement from a random init")
+  holds robustly.
+- The "STDP alone is bounded" framing is unchanged. Post-training
+  fitness (-2.26e-04) is still ~10x worse than Block 9's hand-
+  wired closed-loop headline (-2.7284e-05); STDP can't close the
+  topology gap from a random init. The structural-plasticity
+  pitch (slot acquisition + release in step 17) remains the
+  project's answer.
+- Block 13 used `overnight_batch._step16_once` directly, which
+  guarantees bit-exact comparability with overnight_batch's
+  blocks 4/5 at the overlapping seeds. The N=100 measurement is
+  a strict superset of the prior N=5 / N=20 numbers; no new
+  experimental design choices were made beyond the seed count.

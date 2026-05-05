@@ -2190,3 +2190,81 @@ is 4× the gap at H=0.5."*
   do if any of these numbers go into a paper.
 - Single machine, single run.
 - Wall-time numbers (4.5 min total) are GTX 1050 Mobile-specific.
+
+---
+
+## 2026-05-05 — Block 13: STDP +14% headline reanchored at N=100
+
+The N=100 multi-seed reanchor of step 16's headline STDP-learning
+claim (rate=1.0, init_v=1.0). Step 16's original "+14%" was N=1
+in the dev-log, supplemented by overnight_batch block 4 (N=5) and
+block 5 (N=20). Block 13 puts SEM on the headline at N=100.
+
+- **Script:** `experiments/block13_stdp_n100.py`.
+- **Machine:** ASUS VivoBook X580GD, NVIDIA GTX 1050 Mobile.
+- **Sweep:** N=100 seeds (stride 37) at rate=1.0, init_v=1.0,
+  init_v_std=0.3, closed-loop gain=50, D008 i_mult=8.0, T_train=20k,
+  T_measure=2k. One row per seed.
+- **Total wall time:** **151.1 s = 2.5 min** for 100 seeds.
+
+### Per-seed metrics, N=100
+
+| metric           | mean         | std       | SEM       | min          | max          |
+|------------------|-------------:|----------:|----------:|-------------:|-------------:|
+| fit_before       | −2.6858e-04  | 7.93e-06  | 7.93e-07  | −2.9106e-04  | −2.5319e-04  |
+| fit_after        | −2.2567e-04  | 6.41e-06  | 6.41e-07  | −2.4330e-04  | −2.1325e-04  |
+| improvement_pct  | **+15.96**   | **1.36**  | **0.14**  | **+13.05**   | **+20.12**   |
+
+### Headline: +15.96% ± 0.27% (95% CI, N=100)
+
+The original step 16 "+14%" claim was N=1; Block 13 confirms the
+qualitative finding (STDP at rate=1.0 produces measurable
+post-training improvement) and tightens the magnitude:
+
+    +15.96% +/- 0.14% (SEM)
+    +15.96% +/- 0.27% (95% CI)
+
+All 100 seeds show **positive** improvement (range [+13.05%,
++20.12%]). STDP at rate=1.0 reliably moves fitness toward zero;
+the +14% framing was at the lower tail of the distribution.
+
+### Comparing to prior measurements
+
+| Source                                | N    | improvement      |
+|---------------------------------------|------|------------------|
+| Step 16 dev log (single seed)         | 1    | "~14%"           |
+| overnight_batch block 4 (rate=1.0/iv=1.0) | 5  | not separately reported |
+| overnight_batch block 5 (baseline_stdp_only) | 20 | not separately reported |
+| **Block 13 (this entry)**             | **100** | **+15.96% ± 0.14% SEM** |
+
+The earlier numbers are inside Block 13's distribution; the
+headline shifts ~2 percentage points upward at N=100 with a tight
+SEM bound.
+
+### Implications
+
+1. **Step 16's STDP-works claim is locked.** STDP at rate=1.0
+   reliably produces +15.96% ± 0.27% improvement (95% CI, N=100).
+   Future references should cite +16% rather than +14%.
+2. **The README dev-log narrative for step 16 should be updated**
+   to reflect the corrected headline number, with a cross-reference
+   to DISCOVERIES.md X008.
+3. **The qualitative "STDP alone is bounded" framing still holds.**
+   At rate=1.0, post-training fitness (−2.2567e-04 mean) is still
+   ~10× worse than Block 9's hand-wired closed-loop headline
+   (−2.7284e-05 at T=10M). STDP makes a measurable contribution
+   from a random init but cannot close the topology gap; the
+   structural-plasticity follow-up (slot acquisition + release in
+   step 17) remains the project's pitched answer.
+
+### Caveats
+
+- N=100 is a reasonable variance bound; given the 2.5-min wall on
+  the laptop, N=500 would be ~12 min - trivial to do if this
+  number ever needs to be the centerpiece of a publication-grade
+  claim.
+- Single machine, single run.
+- Block 13 imports `overnight_batch._step16_once` directly; the
+  cross-file regression test in `tests/test_block13_stdp_n100.py`
+  pins the call signature so an overnight_batch refactor breaks
+  Block 13 at gate time.
